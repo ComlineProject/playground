@@ -1,0 +1,17 @@
+body {
+    background: #12110F;
+    margin: 0;
+}
+
+h1,h2,h3,h4,li {
+    font-family: 'VT323', monospace;
+    font-weight: normal;
+    color: #F2E1CA;
+}
+
+
+a,p,text {
+    font-family: 'VT323', monospace;
+    padding-left: 10pt;
+    color: #F2E1CA;
+}
