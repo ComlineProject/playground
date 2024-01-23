@@ -73,9 +73,11 @@
         margin-bottom: 5pt;
         border-color: #4D3C2F;
         border-style: ridge;
-
+        gap: 2pt;
     }
     .tabButton {
+        width: 100%;
+        text-align: center;
         padding: 10px 20px;
         cursor: pointer;
         text-decoration: none;
