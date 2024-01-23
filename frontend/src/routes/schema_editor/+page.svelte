@@ -1,12 +1,7 @@
 <script>
-    import SchemaEditor from "$lib/ui/schema_editor.svelte";
+	import SchemaEditorMonaco from "$lib/ui/schema_editor_monaco.svelte";
 </script>
 
 
-<SchemaEditor/>
-
-
-<style>
-
-</style>
+<SchemaEditorMonaco/>
 

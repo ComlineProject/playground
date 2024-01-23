@@ -51,6 +51,8 @@
     }
 
     main {
+        width: 100%;
+        height: 100%;
         margin: 2px auto;
     }
 
@@ -93,6 +95,8 @@
         background-color: #28211D;
     }
     .tab {
+        width: 100%;
+        height: 100%;
         border: ridge;
         border-color: #4D3C2F;
     }
