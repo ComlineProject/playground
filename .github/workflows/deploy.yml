@@ -7,8 +7,6 @@ on:
 defaults:
     run:
         working-directory: ./frontend
-    with:
-        working-directory: ./frontend
 
 jobs:
   build_site:
@@ -41,7 +39,7 @@ jobs:
         uses: actions/upload-pages-artifact@v2
         with:
           # this should match the `pages` option in your adapter-static options
-          path: 'build/'
+          path: './frontend/build/'
 
   deploy:
     needs: build_site
