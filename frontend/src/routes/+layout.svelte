@@ -2,31 +2,23 @@
     //import "sanitize.css";
     import "../styles/global.css";
 
-    enum Tab {
-        QuickSchemaEditor,
-        PackageEditor,
-        UnitTests,
-        Settings
-    }
-
-    function onSwitchToSchemaTab(tab: Tab) {
-        
-    }
+    import { solvedUrl } from "$lib/paging";
 </script>
 
 
 <header>
-    <h2>Comline Playground</h2>
+    <a class="titleLink" href="/">
+        <h2 class="title">Comline Playground</h2>
+    </a>
 </header>
 
 <main>
     <nav class="tabsMenu">
-        <a class="tabButton" href="/schema_editor">Quick Schema Editor</a>
-        <a class="tabButton" href="/package_editor">Package Editor</a>
+        <a class="tabButton" href={solvedUrl("schema_editor")}>Quick Schema Editor</a>
+        <a class="tabButton" href={solvedUrl("package_editor")}>Package Editor</a>
         <!--<a class="tabButton" href="/call_inspector">Call Inspector</a>-->
-        <a class="tabButton" href="/schema_editor">Unit Tests</a>
-
-        <a class="tabButton" href="/schema_editor">Settings</a>  
+        <a class="tabButton" href={solvedUrl("unit_tests")}>Unit Tests</a>
+        <a class="tabButton" href={solvedUrl("settings")}>Settings</a>  
     </nav>
 
     <div class="tab">
@@ -61,13 +53,17 @@
         color: #F2E1CA;
     }
 
+    .titleLink {
+        text-decoration: none;
+    }
     .title {
         position: relative;
         display: flex;
-        border-color: #614A39;
-        border-style: ridge;
-        margin-bottom: 1pt;
     }
+    .title:hover {
+        color: #DBB594;
+    }
+
     .tabsMenu {
         display: flex;
         justify-content: center;
