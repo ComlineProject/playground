@@ -40,6 +40,9 @@
     "highlight.js": "^11.9.0",
     "normalize.css": "^8.0.1",
     "sanitize.css": "^13.0.0",
-    "sass": "^1.70.0"
+    "sass": "^1.70.0",
+    "monaco-editor": "^0.45.0",
+		"svelte-ace": "^1.0.21",
+		"svelte-monaco": "^0.3.0"
   }
 }
