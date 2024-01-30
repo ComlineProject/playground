@@ -7,6 +7,10 @@ on:
 defaults:
     run:
         working-directory: ./frontend
+    uses:
+        working-directory: ./frontend
+    with:
+        working-directory: ./frontend
 
 jobs:
   build_site:
