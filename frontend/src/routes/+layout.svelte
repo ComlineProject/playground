@@ -7,7 +7,7 @@
 
 
 <header>
-    <a class="titleLink" href="/">
+    <a class="titleLink" href={solvedUrl()}>
         <h2 class="title">Comline Playground</h2>
     </a>
 </header>
