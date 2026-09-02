@@ -109,9 +109,10 @@ export function addInstance(
     host.instanceIds.push(inst.id);
     inst.nodeId = host.id;
   } else {
+    const id = nextNodeId();
     const node: Node = {
-      id: nextNodeId(),
-      label: inst.name,
+      id,
+      label: `Machine ${nodeCounter}`, // a box is a machine; rename it in the canvas
       x: place.x ?? 0,
       y: place.y ?? 0,
       instanceIds: [inst.id],
@@ -120,6 +121,12 @@ export function addInstance(
     inst.nodeId = node.id;
   }
   return inst;
+}
+
+/** Rename a machine box. An empty / blank label is ignored. */
+export function renameNode(session: Session, nodeId: string, label: string): void {
+  const nd = session.nodes.find((n) => n.id === nodeId);
+  if (nd && label.trim()) nd.label = label.trim();
 }
 
 export function removeInstance(session: Session, id: string): void {
