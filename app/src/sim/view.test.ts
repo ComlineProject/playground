@@ -282,3 +282,34 @@ test("polish — the frame filter hides a kind and restores it", async () => {
   assert.ok(shownKinds().includes("handshake"), "handshake rows back");
   sim.destroy();
 });
+
+test("polish — round-trip time shows on the reply, blank on the request", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+    "click",
+  );
+  await tick();
+
+  const rows = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
+  const dt = (r: HTMLElement) => r.querySelector(".frame-delta")!.textContent ?? "";
+  assert.equal(dt(rows.find((r) => r.dataset.kind === "request")!), "", "no wall-clock gap on a request");
+  assert.match(
+    dt(rows.find((r) => r.dataset.kind === "response")!),
+    /^\d+ ms$/,
+    "the reply carries a round-trip time",
+  );
+  sim.destroy();
+});
