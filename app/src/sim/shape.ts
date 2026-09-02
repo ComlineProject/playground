@@ -68,3 +68,64 @@ export type TypeRef =
   | { kind: "array"; of: TypeRef }
   | { kind: "unit" }
   | { kind: "union"; of: TypeRef[] };
+
+// ── helpers ─────────────────────────────────────────────────────────────
+
+/** The protocol named `name` in schema `ns`, or `undefined`. */
+export function findProtocol(
+  shape: ProjectShape,
+  ns: string,
+  name: string,
+): { schema: SchemaShape; protocol: ProtocolShape } | undefined {
+  const schema = shape.schemas.find((s) => s.namespace === ns);
+  const protocol = schema?.protocols.find((p) => p.name === name);
+  return schema && protocol ? { schema, protocol } : undefined;
+}
+
+/** A short label for a `TypeRef` (`u64`, `Message[]`, `A | B`, `()`). */
+export function typeLabel(ty: TypeRef): string {
+  switch (ty.kind) {
+    case "unit":
+      return "()";
+    case "prim":
+    case "ref":
+      return ty.name;
+    case "array":
+      return `${typeLabel(ty.of)}[]`;
+    case "union":
+      return ty.of.map(typeLabel).join(" | ");
+  }
+}
+
+/** A zero value for `ty`, for seeding "reply with value" and the call form.
+ *  `ref` types recurse through `types`; unknown / recursive → `null`. */
+export function zeroValue(ty: TypeRef, types: TypeDef[], seen: string[] = []): unknown {
+  switch (ty.kind) {
+    case "unit":
+      return null;
+    case "array":
+      return [];
+    case "union":
+      return ty.of.length ? zeroValue(ty.of[0], types, seen) : null;
+    case "prim":
+      return zeroPrim(ty.name);
+    case "ref": {
+      if (seen.includes(ty.name)) return null;
+      const def = types.find((t) => t.name === ty.name);
+      if (!def) return null;
+      if (def.kind === "enum") return def.variants[0] ?? null;
+      const obj: Record<string, unknown> = {};
+      for (const f of def.fields) obj[f.name] = zeroValue(f.ty, types, [...seen, ty.name]);
+      return obj;
+    }
+  }
+}
+
+function zeroPrim(name: string): unknown {
+  if (name === "bool") return false;
+  if (name === "string" || name === "str") return "";
+  if (/^[us](8|16|32|64|128)$/.test(name) || name === "f32" || name === "f64" || name === "float") {
+    return 0;
+  }
+  return null;
+}
