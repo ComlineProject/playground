@@ -11,11 +11,15 @@
 //!   resolution, then per-file diagnostics (parse errors + `comline-core`
 //!   validation) and per-file IR.
 //! - [`generate_project`] — the whole set's frozen IR → generated files.
+//! - [`describe_project`] — the frozen IR as a machine-readable protocol
+//!   description (namespace, `ir_hash`, functions, errors, types) for the
+//!   simulation to drive.
 //! - [`semantic_tokens`] / [`hover`] / [`completions`] — the LSP handlers, run
 //!   against the active file, so highlighting / hover / autocomplete match
 //!   `comline-lsp`.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
@@ -23,8 +27,10 @@ use wasm_bindgen::prelude::*;
 
 use comline_core::package::config::ir::interpreter::ProjectInterpreter;
 use comline_core::schema::idl::grammar::Declaration;
+use comline_core::schema::ir::compiler::interpreted::kind_search::{KindValue, Primitive};
 use comline_core::schema::ir::compiler::interpreter::incremental::IncrementalInterpreter;
 use comline_core::schema::ir::context::SchemaContext;
+use comline_core::schema::ir::frozen::schema_ir_hash;
 use comline_core::schema::ir::frozen::unit::FrozenUnit;
 use comline_core::schema::ir::validation::{self, ValidationError};
 use comline_core::utils::codemap::CodeMap;
@@ -307,6 +313,276 @@ fn plain_error(message: String) -> Diagnostic {
         source: Some("comline".to_string()),
         message,
         ..Default::default()
+    }
+}
+
+// ── protocol description (drives the simulation) ─────────────────────────
+
+#[derive(Serialize)]
+struct ProjectShape {
+    schemas: Vec<SchemaShape>,
+}
+
+#[derive(Serialize)]
+struct SchemaShape {
+    /// `::`-joined, e.g. `chat` or `wire::frame`.
+    namespace: String,
+    /// `comline-core`'s `schema_ir_hash` as `0x`-prefixed 16 hex digits — the
+    /// value the generators emit as `IR_HASH`, so a sim connection's handshake
+    /// mirrors a real one.
+    ir_hash: String,
+    protocols: Vec<ProtocolShape>,
+    errors: Vec<ErrorShape>,
+    /// Every struct / enum in the schema, so the call form can render nested
+    /// inputs.
+    types: Vec<TypeDef>,
+}
+
+#[derive(Serialize)]
+struct ProtocolShape {
+    name: String,
+    /// `"datagram"` | `"jsonrpc"` — from the protocol's `@framing`, else the
+    /// datagram default.
+    framing: String,
+    functions: Vec<FnShape>,
+}
+
+#[derive(Serialize)]
+struct FnShape {
+    name: String,
+    /// 0-based position in the protocol — the `Call` id `resolveKind` matches.
+    index: u32,
+    /// No `_return` at all — a fire-and-forget `notify`, not `Some(Unit)`.
+    oneway: bool,
+    args: Vec<ArgShape>,
+    returns: Option<TypeRef>,
+    throws: Vec<ThrowShape>,
+}
+
+#[derive(Serialize)]
+struct ArgShape {
+    name: String,
+    ty: TypeRef,
+}
+
+#[derive(Serialize)]
+struct ThrowShape {
+    ordinal: u16,
+    /// The error's name, or `"<unresolved>"` for a bare `throws` slot.
+    name: String,
+}
+
+#[derive(Serialize)]
+struct ErrorShape {
+    ordinal: u16,
+    name: String,
+    message: String,
+    fields: Vec<FieldShape>,
+}
+
+#[derive(Serialize)]
+struct FieldShape {
+    name: String,
+    ty: TypeRef,
+    optional: bool,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum TypeDef {
+    Struct { name: String, fields: Vec<FieldShape> },
+    Enum { name: String, variants: Vec<String> },
+}
+
+/// A type reference in a signature. Frozen function args / returns / fields are
+/// almost always `KindValue::Namespaced(<string>, None)`; this classifies that
+/// string (`u64`, `Message`, `Message[]`, …) into a shape the UI can render.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum TypeRef {
+    Prim { name: String },
+    Ref { name: String },
+    Array { of: Box<TypeRef> },
+    Unit,
+    Union { of: Vec<TypeRef> },
+}
+
+/// Parse and freeze every file, then describe each frozen schema's protocols,
+/// errors and types. `files` is `[{ path, source }]`.
+#[wasm_bindgen]
+pub fn describe_project(files: JsValue) -> JsValue {
+    let files: Vec<FileInput> = match serde_wasm_bindgen::from_value(files) {
+        Ok(f) => f,
+        Err(_) => return to_js(&ProjectShape { schemas: vec![] }),
+    };
+    let frozen = interpret_project(&files).1;
+
+    // Struct / enum names across the whole project, so a cross-file type
+    // reference still classifies as `ref` (not an opaque scalar).
+    let known: HashSet<&str> = frozen
+        .iter()
+        .flat_map(|(_, units)| units.iter())
+        .filter_map(|u| match u {
+            FrozenUnit::Struct { name, .. } | FrozenUnit::Enum { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    let schemas = frozen
+        .iter()
+        .map(|(ns_path, units)| describe_schema(ns_path, units, &known))
+        .collect();
+    to_js(&ProjectShape { schemas })
+}
+
+fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -> SchemaShape {
+    let errors: Vec<ErrorShape> = units
+        .iter()
+        .filter_map(|u| match u {
+            FrozenUnit::Error { ordinal, name, message, fields, .. } => Some(ErrorShape {
+                ordinal: *ordinal,
+                name: name.clone(),
+                message: message.clone(),
+                fields: fields.iter().filter_map(|f| field_shape(f, known)).collect(),
+            }),
+            _ => None,
+        })
+        .collect();
+
+    let types = units
+        .iter()
+        .filter_map(|u| match u {
+            FrozenUnit::Struct { name, fields, .. } => Some(TypeDef::Struct {
+                name: name.clone(),
+                fields: fields.iter().filter_map(|f| field_shape(f, known)).collect(),
+            }),
+            FrozenUnit::Enum { name, variants, .. } => Some(TypeDef::Enum {
+                name: name.clone(),
+                variants: variants.iter().filter_map(enum_variant_name).collect(),
+            }),
+            _ => None,
+        })
+        .collect();
+
+    let protocols = units
+        .iter()
+        .filter_map(|u| match u {
+            FrozenUnit::Protocol { name, parameters, functions, .. } => Some(ProtocolShape {
+                name: name.clone(),
+                framing: framing_of(parameters),
+                functions: functions
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, fu)| fn_shape(i as u32, fu, &errors, known))
+                    .collect(),
+            }),
+            _ => None,
+        })
+        .collect();
+
+    SchemaShape {
+        namespace: ns_path.replace('/', "::"),
+        ir_hash: format!("{:#018x}", schema_ir_hash(units)),
+        protocols,
+        errors,
+        types,
+    }
+}
+
+fn framing_of(params: &[FrozenUnit]) -> String {
+    for p in params {
+        if let FrozenUnit::Property { name, expression } = p {
+            if name == "framing" {
+                return match expression.as_deref() {
+                    Some("jsonrpc") | Some("jsonrpc-2.0") => "jsonrpc".to_string(),
+                    _ => "datagram".to_string(),
+                };
+            }
+        }
+    }
+    "datagram".to_string()
+}
+
+fn field_shape(u: &FrozenUnit, known: &HashSet<&str>) -> Option<FieldShape> {
+    match u {
+        FrozenUnit::Field { name, kind_value, optional, .. } => Some(FieldShape {
+            name: name.clone(),
+            ty: type_ref(kind_value, known),
+            optional: *optional,
+        }),
+        _ => None,
+    }
+}
+
+fn enum_variant_name(u: &FrozenUnit) -> Option<String> {
+    match u {
+        FrozenUnit::EnumVariant(kv, _) => Some(match kv {
+            KindValue::EnumVariant(n, _) | KindValue::Namespaced(n, _) => n.clone(),
+            KindValue::Primitive(p) => prim_name(p),
+            _ => "?".to_string(),
+        }),
+        _ => None,
+    }
+}
+
+fn fn_shape(index: u32, u: &FrozenUnit, errors: &[ErrorShape], known: &HashSet<&str>) -> Option<FnShape> {
+    match u {
+        FrozenUnit::Function { name, arguments, _return, throws, .. } => Some(FnShape {
+            name: name.clone(),
+            index,
+            oneway: _return.is_none(),
+            args: arguments
+                .iter()
+                .map(|a| ArgShape { name: a.name.clone(), ty: type_ref(&a.kind, known) })
+                .collect(),
+            returns: _return.as_ref().map(|k| type_ref(k, known)),
+            throws: throws
+                .iter()
+                .map(|ord| ThrowShape {
+                    ordinal: *ord,
+                    name: errors
+                        .iter()
+                        .find(|e| e.ordinal == *ord)
+                        .map(|e| e.name.clone())
+                        .unwrap_or_else(|| "<unresolved>".to_string()),
+                })
+                .collect(),
+        }),
+        _ => None,
+    }
+}
+
+fn type_ref(kind: &KindValue, known: &HashSet<&str>) -> TypeRef {
+    match kind {
+        KindValue::Unit => TypeRef::Unit,
+        KindValue::Union(members) => TypeRef::Union {
+            of: members.iter().map(|m| type_ref(m, known)).collect(),
+        },
+        KindValue::Primitive(p) => TypeRef::Prim { name: prim_name(p) },
+        KindValue::EnumVariant(n, _) | KindValue::Namespaced(n, _) => name_ref(n, known),
+    }
+}
+
+/// A frozen signature type is a plain string: `u64`, `Message`, `Message[]`.
+/// The only distinction the UI needs is "a type declared in this project"
+/// (render its fields) vs. "anything else" (one scalar input) — and the
+/// grammar reserves the primitive keywords, so a declared name can never
+/// collide with `u64` / `string` / …. That makes `known` (built from the IR)
+/// the single source of truth; there is no primitive-name list to keep in
+/// sync with `comline-core`.
+fn name_ref(n: &str, known: &HashSet<&str>) -> TypeRef {
+    match n.strip_suffix("[]") {
+        Some(elem) => TypeRef::Array { of: Box::new(name_ref(elem, known)) },
+        None if known.contains(n) => TypeRef::Ref { name: n.to_string() },
+        None => TypeRef::Prim { name: n.to_string() },
+    }
+}
+
+fn prim_name(p: &Primitive) -> String {
+    // strum's `Name` prop is empty for `String` / `Namespaced`.
+    match p.name() {
+        "" => "string".to_string(),
+        n => n.to_string(),
     }
 }
 

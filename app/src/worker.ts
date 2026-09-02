@@ -1,17 +1,21 @@
 /// The compile worker: loads the Comline WASM module once, then answers
-/// `compileProject` / `generateProject` / `semanticTokens` / `hover` /
-/// `completions` requests off the main thread. The editor services call the
-/// language server's handlers verbatim, so the editor matches `comline-lsp`;
-/// `compileProject` / `generateProject` run the schema set as one package, so
-/// cross-file `use` resolves the way `comline build` resolves it.
+/// `compileProject` / `generateProject` / `describeProject` / `semanticTokens` /
+/// `hover` / `completions` requests off the main thread. The editor services
+/// call the language server's handlers verbatim, so the editor matches
+/// `comline-lsp`; `compileProject` / `generateProject` / `describeProject` run
+/// the schema set as one package, so cross-file `use` resolves the way
+/// `comline build` resolves it.
 
 import init, {
   compile_project,
   generate_project,
+  describe_project,
   semantic_tokens,
   hover,
   completions,
 } from "./wasm/comline_playground_wasm.js";
+
+export type { ProjectShape } from "./sim/shape.ts";
 
 // ── result shapes (a thin slice of lsp-types) ─────────────────────────────
 export interface LspPosition {
@@ -74,6 +78,7 @@ export interface Hover {
 type Req =
   | { id: number; cmd: "compileProject"; files: FileInput[] }
   | { id: number; cmd: "generateProject"; files: FileInput[]; target: string; mode: string }
+  | { id: number; cmd: "describeProject"; files: FileInput[] }
   | { id: number; cmd: "semanticTokens"; source: string }
   | { id: number; cmd: "hover"; source: string; line: number; character: number }
   | { id: number; cmd: "completions"; source: string; line: number; character: number };
@@ -91,6 +96,9 @@ self.onmessage = async (e: MessageEvent<Req>) => {
         break;
       case "generateProject":
         result = generate_project(req.files, req.target, req.mode);
+        break;
+      case "describeProject":
+        result = describe_project(req.files);
         break;
       case "semanticTokens":
         result = semantic_tokens(req.source);
