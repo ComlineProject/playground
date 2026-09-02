@@ -15,7 +15,18 @@
     <main>
       <section class="pane">
         <div class="pane-head">schema</div>
-        <textarea id="editor" spellcheck="false" autocomplete="off"></textarea>
+        <div class="editor" id="editor-wrap">
+          <pre id="editor-hl" class="editor-layer" aria-hidden="true"><code></code></pre>
+          <textarea
+            id="editor"
+            class="editor-layer"
+            spellcheck="false"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            wrap="off"
+          ></textarea>
+        </div>
       </section>
 
       <section class="pane">
