@@ -9,7 +9,11 @@
   <body>
     <header>
       <h1>Comline Playground</h1>
-      <div class="controls">
+      <div class="seg" id="app-mode" role="tablist" aria-label="workspace">
+        <button data-app="edit" class="active">edit</button>
+        <button data-app="simulate">simulate</button>
+      </div>
+      <div class="controls" id="gen-controls">
         <div class="seg" id="mode" role="tablist" aria-label="generation mode">
           <button data-mode="code" class="active">code</button>
           <button data-mode="lib">lib</button>
@@ -59,6 +63,8 @@
         <div id="view" class="view"></div>
       </section>
     </main>
+
+    <div id="sim"></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
