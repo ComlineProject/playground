@@ -17,7 +17,7 @@ import type {
 // ── sample: two files, one `use`ing the other ────────────────────────────
 const SAMPLE_FILES: { name: string; doc: string }[] = [
   {
-    name: "chat.comline",
+    name: "chat.ids",
     doc: `use types::Message
 
 error Rejected {
@@ -35,7 +35,7 @@ protocol Chat {
 `,
   },
   {
-    name: "types.comline",
+    name: "types.ids",
     doc: `struct Message {
     body: string
     seq: u64
@@ -207,7 +207,7 @@ function baseName(name: string): string {
 }
 function extName(name: string): string {
   const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot) : ".comline";
+  return dot > 0 ? name.slice(dot) : ".ids";
 }
 
 function uniqueName(name: string, exceptId?: string): string {
@@ -226,14 +226,14 @@ function promptName(title: string, def: string): string {
   if (raw === null) return "";
   let name = raw.trim().replace(/^\/+|\/+$/g, "");
   if (!name) return "";
-  if (!/\.[^./]+$/.test(name)) name += ".comline";
+  if (!/\.[^./]+$/.test(name)) name += ".ids";
   return name;
 }
 
 function defaultName(): string {
   let n = files.length + 1;
-  while (files.some((f) => f.name === `schema${n}.comline`)) n++;
-  return `schema${n}.comline`;
+  while (files.some((f) => f.name === `schema${n}.ids`)) n++;
+  return `schema${n}.ids`;
 }
 
 function addFile() {

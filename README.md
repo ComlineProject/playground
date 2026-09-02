@@ -1,6 +1,6 @@
 # Comline Playground
 
-Type a `.comline` schema, see the diagnostics, the frozen IR, and the generated
+Type a `.ids` schema, see the diagnostics, the frozen IR, and the generated
 code — live, in the browser. Runs the **actual** `comline-core` +
 `comline-codegen` + the `comline-language-server` analysis (compiled to WASM),
 so what you see matches the CLI and `comline-lsp`.
