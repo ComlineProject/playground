@@ -842,6 +842,21 @@ details.frame-row > summary > span {
   padding: 0.3rem 0.4rem;
   color: var(--err);
 }
+.frame-idle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.62rem;
+  color: var(--muted);
+  opacity: 0.75;
+}
+.frame-idle::before,
+.frame-idle::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--border);
+}
 .frame-body {
   padding: 0.3rem 0.6rem 0.5rem;
   background: var(--bg);
