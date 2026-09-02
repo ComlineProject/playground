@@ -193,12 +193,15 @@ export function createSim(): SimView {
     }
     for (const id of nd.instanceIds) {
       const inst = session!.instances.find((i) => i.id === id);
-      if (inst) g.append(instRow(inst, nd, g));
+      if (inst) g.append(instRow(inst));
     }
+    // one drag handler for the whole box — grab anywhere (header, padding, a
+    // row) to move it; a press that doesn't move selects the row it landed on.
+    g.addEventListener("pointerdown", (e) => startGroupDrag(e, nd, g));
     return g;
   }
 
-  function instRow(inst: Instance, nd: Node, groupEl: HTMLElement): HTMLElement {
+  function instRow(inst: Instance): HTMLElement {
     const n = div(`sim-node role-${inst.role}`);
     n.dataset.id = inst.id;
     if (inst.id === selectedId) n.classList.add("selected");
@@ -215,7 +218,6 @@ export function createSim(): SimView {
     n.append(name, sub, port);
 
     n.addEventListener("click", () => select(inst.id));
-    n.addEventListener("pointerdown", (e) => startGroupDrag(e, nd, groupEl));
     port.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       startConnectDrag(e, inst);
@@ -228,13 +230,15 @@ export function createSim(): SimView {
   }
 
   function startGroupDrag(e: PointerEvent, nd: Node, groupEl: HTMLElement) {
-    if ((e.target as HTMLElement | null)?.closest(".node-port")) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest(".node-port")) return; // the port starts a connect drag
+    const rowId = target?.closest<HTMLElement>(".sim-node")?.dataset.id ?? null;
     const start = canvasPoint(e);
-    if (!start) return; // no layout — the click handler does the selecting
+    // No layout (tests): the row's own click handler does the selecting.
+    if (!start) return;
     const ox = start.x - nd.x;
     const oy = start.y - nd.y;
     let moved = false;
-    groupEl.setPointerCapture?.(e.pointerId);
 
     const move = (ev: PointerEvent) => {
       const p = canvasPoint(ev);
@@ -249,6 +253,7 @@ export function createSim(): SimView {
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      if (!moved && rowId) select(rowId); // a press without a drag = select that row
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
