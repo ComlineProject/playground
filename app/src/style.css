@@ -105,6 +105,7 @@ main {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   border-right: 1px solid var(--border);
 }
 .pane:last-child {
@@ -121,10 +122,43 @@ main {
   color: var(--muted);
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
-  min-height: 2rem;
+  min-height: 2.1rem;
 }
-#active-name {
+
+/* ── open-file tabs (top of the editor pane) ─────────────────────────── */
+.tabbar {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  min-height: 2.1rem;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover {
   color: var(--fg);
+}
+.tab.active {
+  color: var(--fg);
+  background: var(--bg);
+}
+.tab-x {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.tab-x:hover {
+  color: var(--err);
 }
 
 /* CodeMirror mount — the editor colours / metrics live in editor.ts's theme. */
@@ -137,61 +171,91 @@ main {
   height: 100%;
 }
 
-/* virtual file strip */
-.files {
+/* ── file tree (bottom of the editor pane) ───────────────────────────── */
+.tree-panel {
+  flex: 0 0 190px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+}
+.tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+.icon-btn {
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.4rem;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+
+.filetree,
+.gen-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 0.2rem 0;
+  font-size: 0.75rem;
+}
+.tree-row {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  flex: 0 0 auto;
-  padding: 0.3rem 0.5rem;
-  background: var(--bg-2);
-  border-top: 1px solid var(--border);
-  overflow-x: auto;
-}
-.file-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font: inherit;
-  font-size: 0.72rem;
+  padding: 0.13rem 0.6rem 0.13rem 0.4rem;
   color: var(--muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 0.15rem 0.5rem;
   cursor: pointer;
   white-space: nowrap;
 }
-.file-chip:hover {
+.tree-row:hover {
   color: var(--fg);
+  background: #ffffff08;
 }
-.file-chip.active {
+.tree-row.active {
   color: var(--fg);
   background: var(--bg);
-  border-color: var(--border);
 }
-.file-x {
-  font-size: 0.9rem;
-  line-height: 1;
-  color: var(--muted);
-}
-.file-x:hover {
-  color: var(--err);
-}
-.file-add {
-  font: inherit;
-  font-size: 0.9rem;
-  line-height: 1;
-  color: var(--muted);
-  background: transparent;
-  border: 1px dashed var(--border);
-  border-radius: 4px;
-  padding: 0.05rem 0.45rem;
-  cursor: pointer;
-}
-.file-add:hover {
+.tree-row.dir {
   color: var(--fg);
-  border-color: var(--muted);
+}
+.tree-caret {
+  width: 0.8rem;
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 0.6rem;
+  color: var(--muted);
+}
+.tree-spacer {
+  width: 0.8rem;
+  flex: 0 0 auto;
+}
+.tree-x {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  visibility: hidden;
+}
+.tree-row:hover .tree-x {
+  visibility: visible;
+}
+.tree-x:hover {
+  color: var(--err);
 }
 
 .tabs {
@@ -219,9 +283,27 @@ main {
 
 .view {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 0.75rem 1rem;
   font-size: 0.8rem;
+}
+/* generated: file tree beside a single-file view */
+.view.split {
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+}
+.gen-tree {
+  flex: 0 0 38%;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.gen-view {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 0.75rem 1rem;
 }
 
 .view .code {
@@ -259,9 +341,6 @@ main {
   color: var(--muted);
 }
 
-.file {
-  margin-bottom: 1.25rem;
-}
 .file-name {
   color: var(--accent);
   font-size: 0.75rem;

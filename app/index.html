@@ -24,11 +24,15 @@
 
     <main>
       <section class="pane">
-        <div class="pane-head">
-          <span id="active-name">schema</span>
-        </div>
+        <div class="tabbar" id="tabbar"></div>
         <div id="editor"></div>
-        <div class="files" id="files"></div>
+        <div class="tree-panel">
+          <div class="tree-head">
+            <span>files</span>
+            <button class="icon-btn" id="tree-add" title="new schema file">+</button>
+          </div>
+          <div class="filetree" id="tree"></div>
+        </div>
       </section>
 
       <section class="pane">
