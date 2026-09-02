@@ -1,0 +1,174 @@
+:root {
+  --bg: #1e1e28;
+  --bg-2: #262633;
+  --fg: #e4e4ef;
+  --muted: #9a9ab0;
+  --accent: #7aa2f7;
+  --ok: #9ece6a;
+  --err: #f7768e;
+  --border: #34344a;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.status {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.status.ok {
+  color: var(--ok);
+}
+.status.err {
+  color: var(--err);
+}
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+.pane:last-child {
+  border-right: none;
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 2rem;
+}
+
+#editor {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 0.9rem 1rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  tab-size: 4;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+.tabs button,
+.output-controls select {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.tabs button:hover {
+  color: var(--fg);
+}
+.tabs button.active {
+  color: var(--fg);
+  border-color: var(--border);
+  background: var(--bg);
+}
+.output-controls select {
+  border-color: var(--border);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.view {
+  flex: 1;
+  overflow: auto;
+  padding: 0.75rem 1rem;
+  font-size: 0.8rem;
+}
+
+.view .code {
+  margin: 0;
+  white-space: pre;
+  color: var(--fg);
+}
+
+.diagnostics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.diagnostics li {
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--err);
+}
+.diagnostics .loc {
+  color: var(--muted);
+  margin-right: 0.6rem;
+}
+
+.ok {
+  color: var(--ok);
+}
+.err {
+  color: var(--err);
+}
+.muted {
+  color: var(--muted);
+}
+
+.file {
+  margin-bottom: 1.25rem;
+}
+.file-name {
+  color: var(--accent);
+  font-size: 0.75rem;
+  margin-bottom: 0.35rem;
+}
