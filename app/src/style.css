@@ -757,3 +757,103 @@ body.mode-simulate #gen-controls {
 .mono {
   font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
 }
+
+/* ── frame inspector (1e) ─────────────────────────────────────────────── */
+.sim-frames-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sim-frames-head .icon-btn {
+  font-size: 0.68rem;
+}
+.sim-wire .wire-refused {
+  stroke: var(--err);
+  stroke-dasharray: 3 3;
+}
+.frame-row {
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+}
+details.frame-row > summary {
+  display: grid;
+  grid-template-columns: 3ch 1fr 5.5rem 5rem 5rem 4rem;
+  gap: 0.5rem;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+  list-style: none;
+}
+details.frame-row > summary::-webkit-details-marker {
+  display: none;
+}
+.frame-row .frame-seq {
+  color: var(--muted);
+}
+.frame-row .frame-kind {
+  color: var(--accent);
+}
+.frame-row .frame-fn {
+  color: var(--fg);
+}
+.frame-row .frame-delta,
+.frame-row .frame-len {
+  color: var(--muted);
+  text-align: right;
+}
+.frame-handshake .frame-kind,
+.frame-unknown .frame-kind {
+  color: var(--muted);
+}
+.frame-refused {
+  padding: 0.3rem 0.4rem;
+  color: var(--err);
+}
+.frame-body {
+  padding: 0.3rem 0.6rem 0.5rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.frame-kv {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0.15rem 0;
+}
+.frame-k {
+  flex: 0 0 6rem;
+  color: var(--muted);
+}
+.frame-json {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--fg);
+  max-height: 8rem;
+  overflow: auto;
+}
+.hex-toggle {
+  font: inherit;
+  font-size: 0.68rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  margin-top: 0.3rem;
+  cursor: pointer;
+}
+.frame-hex {
+  margin: 0.3rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.sim-inspector input[type="number"] {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  width: 5rem;
+}
