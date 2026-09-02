@@ -1,6 +1,11 @@
 /// CodeMirror 6 wiring. Highlighting, diagnostics, hover and autocomplete are
 /// all fed from the Comline language server (via the WASM worker), so the
 /// editor matches `comline-lsp`.
+///
+/// The playground holds a *set* of schema files. Highlighting, hover and
+/// autocomplete run against the active buffer; diagnostics come from compiling
+/// the whole set as one package, so cross-file `use` resolves — the linter
+/// keeps only the rows the language server attributed to the active file.
 
 import {
   autocompletion,
@@ -32,18 +37,29 @@ import {
 } from "@codemirror/view";
 
 import type {
-  CompileResult,
+  CompileProjectResult,
   CompletionItem,
+  FileInput,
   Hover,
   LspPosition,
   SemanticTokens,
 } from "./worker.ts";
 
 export interface EditorBridge {
-  compile(src: string): Promise<CompileResult>;
+  compileProject(files: FileInput[]): Promise<CompileProjectResult>;
   semanticTokens(src: string): Promise<SemanticTokens>;
   hover(src: string, line: number, character: number): Promise<Hover | null>;
   completions(src: string, line: number, character: number): Promise<CompletionItem[]>;
+}
+
+/// What the editor needs from the app besides the bridge: a live snapshot of
+/// every file (the active one included) and the active file's name, so the
+/// linter can compile the package and pick out this file's rows.
+export interface EditorContext {
+  bridge: EditorBridge;
+  project: () => FileInput[];
+  activeName: () => string;
+  onDocChanged: (doc: string) => void;
 }
 
 // legend order — matches `comline-language-server`'s semantic_tokens
@@ -119,12 +135,14 @@ function semanticHighlight(bridge: EditorBridge): Extension {
 }
 
 // ── diagnostics ───────────────────────────────────────────────────────────
-function diagnostics(bridge: EditorBridge) {
+// Compile the whole package, keep the rows the server pinned to this file.
+function diagnostics(ctx: EditorContext) {
   return linter(
     async (view): Promise<CmDiagnostic[]> => {
+      const res = await ctx.bridge.compileProject(ctx.project());
+      const mine = res.files.find((f) => f.path === ctx.activeName());
       const { doc } = view.state;
-      const res = await bridge.compile(doc.toString());
-      return res.diagnostics.map((d) => ({
+      return (mine?.diagnostics ?? []).map((d) => ({
         from: posOf(doc, d.range.start),
         to: Math.max(posOf(doc, d.range.end), posOf(doc, d.range.start) + 1),
         severity: d.severity === 2 ? "warning" : d.severity === 3 ? "info" : "error",
@@ -138,14 +156,14 @@ function diagnostics(bridge: EditorBridge) {
 
 // ── autocomplete ──────────────────────────────────────────────────────────
 function comlineCompletions(bridge: EditorBridge): CompletionSource {
-  return async (ctx) => {
-    const word = ctx.matchBefore(/[\w]*/);
-    if (!ctx.explicit && (!word || word.from === word.to)) return null;
-    const l = ctx.state.doc.lineAt(ctx.pos);
-    const items = await bridge.completions(ctx.state.doc.toString(), l.number - 1, ctx.pos - l.from);
+  return async (cx) => {
+    const word = cx.matchBefore(/[\w]*/);
+    if (!cx.explicit && (!word || word.from === word.to)) return null;
+    const l = cx.state.doc.lineAt(cx.pos);
+    const items = await bridge.completions(cx.state.doc.toString(), l.number - 1, cx.pos - l.from);
     if (items.length === 0) return null;
     return {
-      from: word ? word.from : ctx.pos,
+      from: word ? word.from : cx.pos,
       options: items.map((i) => ({
         label: i.label,
         detail: i.detail,
@@ -244,41 +262,39 @@ const theme = EditorView.theme(
   { dark: true },
 );
 
-export function createEditor(
-  parent: HTMLElement,
-  doc: string,
-  bridge: EditorBridge,
-  onDocChanged: (doc: string) => void,
-): EditorView {
-  return new EditorView({
-    parent,
-    state: EditorState.create({
-      doc,
-      extensions: [
-        lineNumbers(),
-        highlightActiveLine(),
-        highlightActiveLineGutter(),
-        drawSelection(),
-        history(),
-        bracketMatching(),
-        EditorState.tabSize.of(4),
-        indentUnit.of("    "),
-        theme,
-        semanticHighlight(bridge),
-        diagnostics(bridge),
-        autocompletion({ override: [comlineCompletions(bridge)] }),
-        hoverInfo(bridge),
-        keymap.of([
-          indentWithTab,
-          ...defaultKeymap,
-          ...historyKeymap,
-          ...completionKeymap,
-          ...lintKeymap,
-        ]),
-        EditorView.updateListener.of((u) => {
-          if (u.docChanged) onDocChanged(u.state.doc.toString());
-        }),
-      ],
-    }),
+/// One file's editor state — its own document and undo history. The playground
+/// swaps these into the single [`EditorView`] as the user switches files.
+export function makeState(doc: string, ctx: EditorContext): EditorState {
+  return EditorState.create({
+    doc,
+    extensions: [
+      lineNumbers(),
+      highlightActiveLine(),
+      highlightActiveLineGutter(),
+      drawSelection(),
+      history(),
+      bracketMatching(),
+      EditorState.tabSize.of(4),
+      indentUnit.of("    "),
+      theme,
+      semanticHighlight(ctx.bridge),
+      diagnostics(ctx),
+      autocompletion({ override: [comlineCompletions(ctx.bridge)] }),
+      hoverInfo(ctx.bridge),
+      keymap.of([
+        indentWithTab,
+        ...defaultKeymap,
+        ...historyKeymap,
+        ...completionKeymap,
+        ...lintKeymap,
+      ]),
+      EditorView.updateListener.of((u) => {
+        if (u.docChanged) ctx.onDocChanged(u.state.doc.toString());
+      }),
+    ],
   });
+}
+
+export function mountEditor(parent: HTMLElement, state: EditorState): EditorView {
+  return new EditorView({ parent, state });
 }

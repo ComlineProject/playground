@@ -1,11 +1,13 @@
 /// The compile worker: loads the Comline WASM module once, then answers
-/// `compile` / `generate` / `semanticTokens` / `hover` / `completions` requests
-/// off the main thread. The latter three call the language server's handlers
-/// verbatim, so the editor matches `comline-lsp`.
+/// `compileProject` / `generateProject` / `semanticTokens` / `hover` /
+/// `completions` requests off the main thread. The editor services call the
+/// language server's handlers verbatim, so the editor matches `comline-lsp`;
+/// `compileProject` / `generateProject` run the schema set as one package, so
+/// cross-file `use` resolves the way `comline build` resolves it.
 
 import init, {
-  compile,
-  generate,
+  compile_project,
+  generate_project,
   semantic_tokens,
   hover,
   completions,
@@ -26,12 +28,26 @@ export interface LspDiagnostic {
   message: string;
   source?: string;
 }
-export interface CompileResult {
+
+/// One virtual schema file: its name (its stem is the namespace) and its text.
+export interface FileInput {
+  path: string;
+  source: string;
+}
+
+/// Per-file result of compiling the whole set.
+export interface FileReport {
+  path: string;
+  namespace: string;
   ok: boolean;
   diagnostics: LspDiagnostic[];
   ir: string | null;
   units: number;
 }
+export interface CompileProjectResult {
+  files: FileReport[];
+}
+
 export interface GeneratedFile {
   path: string;
   contents: string;
@@ -56,8 +72,8 @@ export interface Hover {
 }
 
 type Req =
-  | { id: number; cmd: "compile"; source: string }
-  | { id: number; cmd: "generate"; source: string; target: string; mode: string }
+  | { id: number; cmd: "compileProject"; files: FileInput[] }
+  | { id: number; cmd: "generateProject"; files: FileInput[]; target: string; mode: string }
   | { id: number; cmd: "semanticTokens"; source: string }
   | { id: number; cmd: "hover"; source: string; line: number; character: number }
   | { id: number; cmd: "completions"; source: string; line: number; character: number };
@@ -70,11 +86,11 @@ self.onmessage = async (e: MessageEvent<Req>) => {
   try {
     let result: unknown;
     switch (req.cmd) {
-      case "compile":
-        result = compile(req.source);
+      case "compileProject":
+        result = compile_project(req.files);
         break;
-      case "generate":
-        result = generate(req.source, req.target, req.mode);
+      case "generateProject":
+        result = generate_project(req.files, req.target, req.mode);
         break;
       case "semanticTokens":
         result = semantic_tokens(req.source);
