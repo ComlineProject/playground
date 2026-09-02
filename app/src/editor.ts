@@ -165,13 +165,20 @@ function renderHover(contents: unknown): string {
 
 function hoverInfo(bridge: EditorBridge) {
   return hoverTooltip(async (view, pos) => {
+    // Anchor the tooltip to the whole word so it stays put while the pointer
+    // moves *within* the symbol — otherwise CM re-queries on every move and
+    // the tooltip flickers.
+    const word = view.state.wordAt(pos);
+    if (!word) return null;
     const l = view.state.doc.lineAt(pos);
     const h = await bridge.hover(view.state.doc.toString(), l.number - 1, pos - l.from);
     if (!h) return null;
     const text = renderHover(h.contents);
     if (!text) return null;
     return {
-      pos,
+      pos: word.from,
+      end: word.to,
+      above: true,
       create: () => {
         const dom = document.createElement("div");
         dom.className = "cm-hover";
