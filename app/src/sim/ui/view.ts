@@ -95,7 +95,7 @@ export function createSim(): SimView {
     }
     const hint = document.createElement("p");
     hint.className = "muted pad";
-    hint.textContent = "drag onto the canvas";
+    hint.textContent = "drag onto the canvas — or onto an existing box to group them (a gateway)";
     paletteEl.append(hint);
   }
 
@@ -116,9 +116,24 @@ export function createSim(): SimView {
     return { x: e.clientX - r.left + canvasEl.scrollLeft, y: e.clientY - r.top + canvasEl.scrollTop };
   }
 
-  canvasEl.addEventListener("dragover", (e) => e.preventDefault());
+  const clearDropTarget = () => {
+    for (const g of canvasEl.querySelectorAll(".sim-node-group.drop-target")) {
+      g.classList.remove("drop-target");
+    }
+  };
+  canvasEl.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    const g = (e.target as HTMLElement | null)?.closest<HTMLElement>(".sim-node-group");
+    if (g?.classList.contains("drop-target")) return;
+    clearDropTarget();
+    g?.classList.add("drop-target");
+  });
+  canvasEl.addEventListener("dragleave", (e) => {
+    if (e.target === canvasEl) clearDropTarget();
+  });
   canvasEl.addEventListener("drop", (e) => {
     e.preventDefault();
+    clearDropTarget();
     const raw = e.dataTransfer?.getData("application/json");
     if (!raw || !session) return;
     const spec = JSON.parse(raw) as { schemaNs: string; protocol: string; role: Role };
@@ -447,6 +462,39 @@ export function createSim(): SimView {
         void syncWires();
       }),
     );
+
+    // ── this box (add a second instance → a gateway) ──
+    const nd = session.nodes.find((x) => x.id === sel.nodeId);
+    if (nd) {
+      inspectorEl.append(section("box"));
+      if (nd.instanceIds.length > 1) {
+        inspectorEl.append(
+          muted(`${nd.instanceIds.length} instances: ` + nd.instanceIds
+            .map((id) => instance(session!, id)?.name ?? id)
+            .join(", ")),
+        );
+      }
+      const addSel = document.createElement("select");
+      addSel.className = "add-inst-sel";
+      addSel.append(opt("", "+ add instance to this box…", true));
+      for (const schema of session.shape.schemas) {
+        for (const p of schema.protocols) {
+          for (const role of ["server", "client"] as Role[]) {
+            addSel.append(opt(`${schema.namespace}|${p.name}|${role}`, `${p.name} · ${role}`));
+          }
+        }
+      }
+      addSel.addEventListener("change", () => {
+        const v = selValue(addSel);
+        if (!v) return;
+        const [schemaNs, protocol, role] = v.split("|");
+        const inst = addInstance(session!, { schemaNs, protocol, role: role as Role }, { nodeId: nd.id });
+        selectedId = inst.id;
+        void syncWires();
+        renderAll();
+      });
+      inspectorEl.append(row("add", addSel));
+    }
 
     // ── connections ──
     inspectorEl.append(section("connections"));
