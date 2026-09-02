@@ -1,9 +1,14 @@
 //! The Comline playground's compile core — the same `comline-core` +
-//! `comline-codegen` the CLI uses, behind a small `wasm-bindgen` surface.
+//! `comline-codegen` the CLI uses and the same analysis the language server
+//! uses, behind a small `wasm-bindgen` surface.
 //!
-//! Single schema, namespace `main`, `code` / `lib` mode. Two entry points:
-//! [`compile`] (parse → IR → validation diagnostics) and [`generate`]
-//! (frozen IR → generated files for a target language).
+//! Single schema, namespace `main`, `code` / `lib` mode.
+//!
+//! - [`compile`]  — parse → IR → diagnostics (the LSP's `all_diagnostics`)
+//! - [`generate`] — frozen IR → generated files for a target language
+//! - [`semantic_tokens`] / [`hover`] / [`completions`] — the LSP handlers
+//!   verbatim, so the editor's highlighting / hover / autocomplete match
+//!   `comline-lsp`.
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -12,76 +17,82 @@ use comline_core::schema::idl::grammar;
 use comline_core::schema::ir::compiler::interpreter::incremental::IncrementalInterpreter;
 use comline_core::schema::ir::compiler::Compile;
 use comline_core::schema::ir::frozen::unit::FrozenUnit;
-use comline_core::schema::ir::validation;
 
 use comline_codegen::{GenRequest, Mode, PackageMeta};
 
+use comline_language_server::analysis::diagnostics::all_diagnostics;
+use comline_language_server::handlers::{completion, hover as hover_h, semantic_tokens};
+use comline_language_server::parser;
+
+use lsp_types::{Position, Url};
+
 const NAMESPACE: &str = "main";
+
+fn uri() -> Url {
+    Url::parse("file:///playground.ids").expect("static uri")
+}
 
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
 }
 
-/// One editor-placeable diagnostic. `start` / `end` are byte offsets into the
-/// source (the editor maps them to line/column).
-#[derive(Serialize)]
-struct Diagnostic {
-    severity: &'static str, // "error"
-    message: String,
-    start: usize,
-    end: usize,
-}
-
 #[derive(Serialize)]
 struct CompileResult {
     ok: bool,
-    diagnostics: Vec<Diagnostic>,
+    /// `lsp-types` diagnostics (line/character ranges), from the LSP's own
+    /// parse-error + validation pipeline.
+    diagnostics: Vec<lsp_types::Diagnostic>,
     /// Debug rendering of the frozen units — `None` while the source does not
     /// parse.
     ir: Option<String>,
-    /// How many top-level declarations froze.
     units: usize,
 }
 
-/// Parse `source`, freeze it, and run `comline-core`'s validation pass.
-/// Returns a `CompileResult` (see the TS `CompileResult` type).
+/// Parse `source`, freeze it, and run the language server's diagnostic pass
+/// (parse errors + `comline-core` validation).
 #[wasm_bindgen]
 pub fn compile(source: &str) -> JsValue {
-    let result = match freeze(source) {
-        Ok(units) => {
-            let mut diagnostics = Vec::new();
-            if let Err(errors) = validation::validate(&units) {
-                for e in errors {
-                    let (start, end) = e.span.unwrap_or((0, 0));
-                    let message = if e.context.is_empty() {
-                        e.message
-                    } else {
-                        format!("{} — {}", e.message, e.context)
-                    };
-                    diagnostics.push(Diagnostic {
-                        severity: "error",
-                        message,
-                        start,
-                        end,
-                    });
-                }
-            }
-            CompileResult {
-                ok: diagnostics.is_empty(),
-                diagnostics,
-                ir: Some(format!("{units:#?}")),
-                units: units.len(),
-            }
+    let parsed = parser::parse(source).expect("parser never errors internally");
+    let diagnostics = all_diagnostics(source, &parsed.errors, parsed.document.as_ref());
+
+    let (ir, units) = match &parsed.document {
+        Some(doc) => {
+            let frozen = IncrementalInterpreter::from_declarations(doc.0.clone());
+            (Some(format!("{frozen:#?}")), frozen.len())
         }
-        Err(diagnostics) => CompileResult {
-            ok: false,
-            diagnostics,
-            ir: None,
-            units: 0,
-        },
+        None => (None, 0),
     };
-    to_js(&result)
+
+    to_js(&CompileResult {
+        ok: diagnostics.is_empty(),
+        diagnostics,
+        ir,
+        units,
+    })
+}
+
+#[wasm_bindgen]
+pub fn semantic_tokens(source: &str) -> JsValue {
+    to_js(&semantic_tokens::get_semantic_tokens(source, &uri()))
+}
+
+#[wasm_bindgen]
+pub fn hover(source: &str, line: u32, character: u32) -> JsValue {
+    to_js(&hover_h::get_hover_info(
+        source,
+        &uri(),
+        Position { line, character },
+    ))
+}
+
+#[wasm_bindgen]
+pub fn completions(source: &str, line: u32, character: u32) -> JsValue {
+    to_js(&completion::get_completions(
+        source,
+        &uri(),
+        Position { line, character },
+    ))
 }
 
 #[derive(Serialize)]
@@ -93,8 +104,6 @@ struct GeneratedFile {
 #[derive(Serialize)]
 struct GenerateResult {
     files: Vec<GeneratedFile>,
-    /// Set instead of `files` when the source didn't compile or the generator
-    /// errored.
     error: Option<String>,
 }
 
@@ -103,16 +112,12 @@ struct GenerateResult {
 #[wasm_bindgen]
 pub fn generate(source: &str, target: &str, mode: &str) -> JsValue {
     let units = match freeze(source) {
-        Ok(units) => units,
-        Err(diags) => {
-            let msg = diags
-                .first()
-                .map(|d| d.message.clone())
-                .unwrap_or_else(|| "does not parse".to_string());
+        Some(units) => units,
+        None => {
             return to_js(&GenerateResult {
                 files: Vec::new(),
-                error: Some(format!("schema does not compile: {msg}")),
-            });
+                error: Some("schema does not parse".to_string()),
+            })
         }
     };
 
@@ -161,33 +166,10 @@ pub fn generate(source: &str, target: &str, mode: &str) -> JsValue {
     to_js(&result)
 }
 
-/// Parse + freeze. `Err` carries parse-error diagnostics; a well-formed tree
-/// always freezes (validation is a separate step).
-fn freeze(source: &str) -> Result<Vec<FrozenUnit>, Vec<Diagnostic>> {
-    match grammar::parse(source) {
-        Ok(document) => Ok(IncrementalInterpreter::from_declarations(document.0)),
-        Err(errors) => Err(errors
-            .iter()
-            .map(|e| Diagnostic {
-                severity: "error",
-                message: parse_error_message(e),
-                start: e.start,
-                end: e.end,
-            })
-            .collect()),
-    }
-}
-
-fn parse_error_message(error: &rust_sitter::errors::ParseError) -> String {
-    use rust_sitter::errors::ParseErrorReason;
-    match &error.reason {
-        ParseErrorReason::UnexpectedToken(t) => format!("unexpected token `{t}`"),
-        ParseErrorReason::MissingToken(t) => format!("missing `{t}`"),
-        ParseErrorReason::FailedNode(nested) => nested
-            .first()
-            .map(parse_error_message)
-            .unwrap_or_else(|| "syntax error".to_string()),
-    }
+/// Parse + freeze; `None` if the source does not parse.
+fn freeze(source: &str) -> Option<Vec<FrozenUnit>> {
+    let document = grammar::parse(source).ok()?;
+    Some(IncrementalInterpreter::from_declarations(document.0))
 }
 
 fn to_js<T: Serialize>(value: &T) -> JsValue {

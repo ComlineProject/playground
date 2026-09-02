@@ -9,14 +9,18 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# The same crates the CLI composes — by git rev, so the playground runs *the
-# CLI's code*, not a re-implementation. Keep the `comline-core` /
-# `comline-codegen` revs identical across all four (one of each in the tree).
+# The same crates the CLI and the language server compose — by git rev, so the
+# playground runs *that* code, not a re-implementation. Keep the `comline-core`
+# rev identical across all of them (one `comline-core` in the tree).
 comline-core = { git = "https://github.com/ComlineProject/core", rev = "50c17cc740676416e945582dd6e2547e8535ac03" }
 comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "d901db42d094ea9e2f59a310e6e885767abcae6b" }
 comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "890688dd579305939d2c8d378309bc64e8eb1afe" }
 comline-codegen-typescript = { git = "https://github.com/ComlineProject/comline-typescript", rev = "5c20074113a748cd96b639c38c5c030c2de9fbea" }
-rust-sitter = "0.4.5"                     # parse-error types
+# The LSP's analysis layer (diagnostics / hover / completion / semantic tokens),
+# without its `tower-lsp` server — builds for wasm32.
+comline-language-server = { git = "https://github.com/ComlineProject/language-server", rev = "b37b6f6efe3db16fe3c190375af116a6ea6f3930", default-features = false }
+lsp-types = "0.94"
+rust-sitter = "0.4.5" # parse-error types
 
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
