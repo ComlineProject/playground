@@ -2,7 +2,9 @@
 /// function, round-trip time (on the reply, measured from its own request by
 /// id — not wall-clock gap between frames, which is mostly idle time), byte
 /// length — expanding to the decoded envelope, the raw hex, and the framing
-/// name. Handshake frames read distinctly; a refused connection gets its own row.
+/// name. A wall-clock gap over `IDLE_MS` inserts an `idle` separator row.
+/// Every row kind — handshake / request / response / idle — is filterable from
+/// the header. A refused connection gets its own row.
 
 import { describeFrame, toHex, type DecodeCtx } from "../framedecode.ts";
 import type { Frame, Tap } from "../transport.ts";
@@ -27,7 +29,7 @@ export function frameLog(): FrameLog {
   const hidden = new Set<string>();
   const filters = document.createElement("div");
   filters.className = "frame-filters";
-  for (const k of ["handshake", "request", "response"]) {
+  for (const k of ["handshake", "request", "response", "idle"]) {
     const b = document.createElement("button");
     b.className = "frame-filter on";
     b.dataset.kind = k;
@@ -53,9 +55,13 @@ export function frameLog(): FrameLog {
   let ctx: DecodeCtx | null = null;
   // request id → when its request frame was sent, so a reply shows round-trip.
   const sentAt = new Map<string, number>();
+  // arrival time of the last frame, for the idle separator.
+  let lastAt: number | null = null;
+
+  const IDLE_MS = 2000;
 
   function applyFilter() {
-    for (const r of list.querySelectorAll<HTMLElement>(".frame-row")) {
+    for (const r of list.querySelectorAll<HTMLElement>(".frame-row, .frame-idle")) {
       r.hidden = hidden.has(r.dataset.kind ?? "");
     }
   }
@@ -69,6 +75,18 @@ export function frameLog(): FrameLog {
 
   function addRow(f: Frame) {
     const detail = ctx ? describeFrame(f, ctx) : { kind: f.kind, framing: "?" };
+
+    // Idle separator — a real wall-clock gap between frames (mostly "you were
+    // reading the last reply"), its own filterable kind.
+    if (lastAt !== null && f.at - lastAt > IDLE_MS) {
+      const sep = document.createElement("div");
+      sep.className = "frame-idle";
+      sep.dataset.kind = "idle";
+      sep.hidden = hidden.has("idle");
+      sep.textContent = `⋯ ${humanGap(f.at - lastAt)} idle`;
+      list.append(sep);
+    }
+    lastAt = f.at;
 
     // Round-trip: recorded on the request, read (and shown) on the reply.
     let rttText = "";
@@ -142,6 +160,7 @@ export function frameLog(): FrameLog {
   clear.addEventListener("click", () => {
     list.replaceChildren();
     sentAt.clear();
+    lastAt = null;
   });
 
   return {
@@ -151,6 +170,7 @@ export function frameLog(): FrameLog {
       unsub = null;
       ctx = decodeCtx ?? null;
       sentAt.clear();
+      lastAt = null;
       list.replaceChildren();
       if (!tap) {
         list.append(empty());
@@ -161,6 +181,13 @@ export function frameLog(): FrameLog {
       unsub = tap.on(addRow);
     },
   };
+}
+
+function humanGap(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
 }
 
 function cell(cls: string, text: string): HTMLSpanElement {
