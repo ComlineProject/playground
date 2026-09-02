@@ -466,10 +466,18 @@ body.mode-simulate #gen-controls {
 .sim-canvas {
   grid-area: canvas;
   position: relative;
-  display: flex;
-  gap: 1rem;
   padding: 1.2rem;
   overflow: auto;
+  touch-action: none;
+}
+.canvas-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
 }
 .sim-inspector {
   grid-area: inspector;
@@ -534,29 +542,23 @@ body.mode-simulate #gen-controls {
   stroke: var(--muted);
   stroke-dasharray: 5 4;
 }
-.sim-lane {
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-  flex: 0 0 200px;
-  z-index: 1;
-}
-.lane-server {
-  margin-left: auto;
-}
-.lane-cap {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+.sim-wire .wire-drag {
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
 }
 .sim-node {
+  position: absolute;
+  width: 150px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-2);
   padding: 0.5rem 0.7rem;
-  cursor: pointer;
-  min-width: 160px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.sim-node:active {
+  cursor: grabbing;
 }
 .sim-node.role-server {
   border-top: 3px solid var(--accent);
@@ -577,6 +579,20 @@ body.mode-simulate #gen-controls {
 .node-sub {
   font-size: 0.7rem;
   color: var(--muted);
+}
+.node-port {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-2);
+  cursor: crosshair;
+}
+.node-port:hover {
+  transform: scale(1.25);
 }
 
 /* inspector */
@@ -745,7 +761,7 @@ body.mode-simulate #gen-controls {
 .sim-frames-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.6rem;
   padding: 0.3rem 0.7rem;
   font-size: 0.68rem;
   text-transform: uppercase;
@@ -754,6 +770,29 @@ body.mode-simulate #gen-controls {
 }
 .sim-frames-head .icon-btn {
   font-size: 0.68rem;
+  margin-left: auto;
+}
+.frame-filters {
+  display: flex;
+  gap: 0.3rem;
+}
+.frame-filter {
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  cursor: pointer;
+  opacity: 0.45;
+}
+.frame-filter.on {
+  opacity: 1;
+  color: var(--fg);
+  border-color: var(--accent);
 }
 .sim-wire .wire-refused {
   stroke: var(--err);

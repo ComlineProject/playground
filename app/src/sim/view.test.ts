@@ -1,7 +1,7 @@
-/// Milestone 1d acceptance, driven through the DOM (linkedom): drop a server
-/// and a client onto the canvas, connect them via the inspector, send a call
-/// from the call form, and see the reply + frames — then flip the server's
-/// behaviour to Raise error and see the mapped error.
+/// The simulate view, driven through the DOM (linkedom): drop instances on the
+/// canvas, connect them (inspector dropdown or a port-to-node drag), send a
+/// call, watch the frames — plus the 1e refusal path and the canvas polish
+/// (free placement, drag-to-connect, frame-kind filter).
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -197,5 +197,88 @@ test("1d — flipping the server to Raise error surfaces the mapped error", asyn
   assert.match(out.textContent!, /Rejected/);
   assert.match(out.textContent!, /denied/);
   assert.ok(out.classList.contains("err"));
+  sim.destroy();
+});
+
+// ── canvas polish ─────────────────────────────────────────────────────
+
+function place(sim: { el: HTMLElement }) {
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+  const nodes = [...sim.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  return {
+    canvas,
+    server: nodes.find((n) => n.classList.contains("role-server"))!,
+    client: nodes.find((n) => n.classList.contains("role-client"))!,
+  };
+}
+
+test("polish — dropped nodes are absolutely placed and don't stack", () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+
+  for (const n of [server, client]) {
+    assert.match(n.style.left, /^\d+px$/, "node is positioned by an inline offset");
+    assert.match(n.style.top, /^\d+px$/);
+  }
+  assert.notEqual(server.style.top, client.style.top, "the two nodes are offset, not stacked");
+  assert.ok(server.querySelector(".node-port"), "each node has a connect port");
+  sim.destroy();
+});
+
+test("polish — drag from a node's port to another node connects them", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+  assert.equal(sim.el.querySelector(".sim-wire .wire-live"), null, "not connected yet");
+
+  fire(server.querySelector(".node-port")!, "pointerdown");
+  fire(client, "pointerenter"); // the pointer is now over the client node
+  window.dispatchEvent(new window.Event("pointerup"));
+  await tick();
+
+  assert.ok(sim.el.querySelector(".sim-wire .wire-live"), "the wire is live");
+  assert.ok(sim.el.querySelector(".call-fn"), "the client's call form is shown");
+  sim.destroy();
+});
+
+test("polish — the frame filter hides a kind and restores it", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+    "click",
+  );
+  await tick();
+
+  const rows = () => [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
+  const shownKinds = () => rows().filter((r) => !r.hidden).map((r) => r.dataset.kind);
+  assert.ok(shownKinds().includes("handshake"));
+
+  const hsFilter = [...sim.el.querySelectorAll(".frame-filter")].find(
+    (b) => b.textContent === "handshake",
+  ) as HTMLButtonElement;
+  fire(hsFilter, "click");
+  assert.ok(!shownKinds().includes("handshake"), "handshake rows hidden");
+  assert.ok(shownKinds().includes("request"), "request rows still shown");
+  assert.ok(!hsFilter.classList.contains("on"));
+
+  fire(hsFilter, "click");
+  assert.ok(shownKinds().includes("handshake"), "handshake rows back");
   sim.destroy();
 });

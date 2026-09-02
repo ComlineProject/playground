@@ -92,13 +92,36 @@ export function createSim(): SimView {
   }
 
   // ── canvas ───────────────────────────────────────────────────────────
+  const NODE_W = 150;
+  const NODE_H = 52;
+  let hoverId: string | null = null; // node the pointer is over, for drop-to-connect
+
+  const dropHint = document.createElement("p");
+  dropHint.className = "muted pad canvas-hint";
+  dropHint.textContent = "drag a client and a server here, then drag between their ports";
+  canvasEl.append(dropHint);
+
+  /** Event point in canvas coordinates, or `null` when the environment has no
+   *  layout (jsdom / linkedom in tests). */
+  function canvasPoint(e: { clientX?: number; clientY?: number }): { x: number; y: number } | null {
+    if (typeof e.clientX !== "number" || typeof e.clientY !== "number") return null;
+    const r = canvasEl.getBoundingClientRect();
+    return { x: e.clientX - r.left + canvasEl.scrollLeft, y: e.clientY - r.top + canvasEl.scrollTop };
+  }
+
   canvasEl.addEventListener("dragover", (e) => e.preventDefault());
   canvasEl.addEventListener("drop", (e) => {
     e.preventDefault();
     const raw = e.dataTransfer?.getData("application/json");
     if (!raw || !session) return;
     const spec = JSON.parse(raw) as { schemaNs: string; protocol: string; role: Role };
-    const inst = addInstance(session, spec);
+    const p = canvasPoint(e);
+    const n = session.instances.length;
+    const inst = addInstance(session, {
+      ...spec,
+      x: Math.max(8, (p?.x ?? 48 + n * 30) - NODE_W / 2),
+      y: Math.max(8, (p?.y ?? 48 + n * 26) - NODE_H / 2),
+    });
     selectedId = inst.id;
     renderAll();
   });
@@ -107,52 +130,135 @@ export function createSim(): SimView {
     return canvasEl.querySelector<HTMLElement>(`.sim-node[data-id="${id}"]`);
   }
 
-  function renderCanvas() {
-    for (const n of [...canvasEl.querySelectorAll(".sim-node, .sim-lane")]) n.remove();
-    if (!session) return;
+  function connected(id: string): boolean {
+    const c = session?.connection;
+    return !!c && (c.clientId === id || c.serverId === id);
+  }
 
-    const lane = (role: Role) => {
-      const l = div(`sim-lane lane-${role}`);
-      const cap = document.createElement("div");
-      cap.className = "lane-cap";
-      cap.textContent = role;
-      l.append(cap);
-      for (const inst of session!.instances.filter((i) => i.role === role)) {
-        l.append(nodeCard(inst));
-      }
-      return l;
-    };
-    canvasEl.append(lane("client"), lane("server"));
+  function select(id: string) {
+    selectedId = id;
+    renderCanvas();
+    renderInspector();
+  }
+
+  function renderCanvas() {
+    for (const n of [...canvasEl.querySelectorAll(".sim-node")]) n.remove();
+    if (!session) return;
+    for (const inst of session.instances) canvasEl.append(nodeCard(inst));
+    dropHint.hidden = session.instances.length > 0;
     drawWire();
   }
 
   function nodeCard(inst: Instance): HTMLElement {
     const n = div(`sim-node role-${inst.role}`);
     n.dataset.id = inst.id;
+    n.style.left = `${inst.x}px`;
+    n.style.top = `${inst.y}px`;
     if (inst.id === selectedId) n.classList.add("selected");
-    if (
-      session?.connection &&
-      (session.connection.clientId === inst.id || session.connection.serverId === inst.id)
-    ) {
-      n.classList.add("wired");
-    }
+    if (connected(inst.id)) n.classList.add("wired");
+
     const name = document.createElement("div");
     name.className = "node-name";
     name.textContent = inst.name;
     const sub = document.createElement("div");
     sub.className = "node-sub mono";
     sub.textContent = `${inst.protocol} · ${inst.role}`;
-    n.append(name, sub);
-    n.addEventListener("click", () => {
-      selectedId = inst.id;
-      renderCanvas();
-      renderInspector();
+    const port = div("node-port");
+    port.title = "drag to a partner to connect";
+    n.append(name, sub, port);
+
+    n.addEventListener("click", () => select(inst.id));
+    n.addEventListener("pointerdown", (e) => startNodeDrag(e, inst, n));
+    port.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      startConnectDrag(e, inst);
+    });
+    n.addEventListener("pointerenter", () => (hoverId = inst.id));
+    n.addEventListener("pointerleave", () => {
+      if (hoverId === inst.id) hoverId = null;
     });
     return n;
   }
 
+  function startNodeDrag(e: PointerEvent, inst: Instance, n: HTMLElement) {
+    if ((e.target as HTMLElement | null)?.closest(".node-port")) return;
+    const start = canvasPoint(e);
+    if (!start) return; // no layout — the click handler does the selecting
+    const ox = start.x - inst.x;
+    const oy = start.y - inst.y;
+    let moved = false;
+    n.setPointerCapture?.(e.pointerId);
+
+    const move = (ev: PointerEvent) => {
+      const p = canvasPoint(ev);
+      if (!p) return;
+      if (!moved && Math.hypot(p.x - start.x, p.y - start.y) < 4) return;
+      moved = true;
+      inst.x = Math.max(0, Math.round(p.x - ox));
+      inst.y = Math.max(0, Math.round(p.y - oy));
+      n.style.left = `${inst.x}px`;
+      n.style.top = `${inst.y}px`;
+      drawWire();
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  function startConnectDrag(e: PointerEvent, from: Instance) {
+    hoverId = null;
+    const fromNode = nodeEl(from.id);
+    const a = fromNode ? center(fromNode) : { x: 0, y: 0 };
+    const temp = document.createElementNS(SVGNS, "line");
+    temp.setAttribute("class", "wire-drag");
+    for (const [k, v] of [
+      ["x1", a.x],
+      ["y1", a.y],
+      ["x2", a.x],
+      ["y2", a.y],
+    ] as const)
+      temp.setAttribute(k, String(v));
+    wireSvg.append(temp);
+
+    const move = (ev: PointerEvent) => {
+      const p = canvasPoint(ev);
+      if (!p) return;
+      temp.setAttribute("x2", String(p.x));
+      temp.setAttribute("y2", String(p.y));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      temp.remove();
+      const target = hoverId && session ? instance(session, hoverId) : null;
+      if (target && target.id !== from.id) tryConnect(from, target);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  function tryConnect(a: Instance, b: Instance) {
+    if (!session) return;
+    if (a.role === b.role || a.protocol !== b.protocol || a.schemaNs !== b.schemaNs) {
+      flashInspectorError(`connect: ${a.protocol} needs a client and a server`);
+      return;
+    }
+    const [clientId, serverId] = a.role === "client" ? [a.id, b.id] : [b.id, a.id];
+    try {
+      setConnection(session, clientId, serverId);
+    } catch (err) {
+      flashInspectorError((err as Error).message);
+      return;
+    }
+    selectedId = clientId; // land on the client — its call form is the next step
+    void reconnect();
+  }
+
   function drawWire() {
-    wireSvg.replaceChildren();
+    for (const l of [...wireSvg.querySelectorAll("line:not(.wire-drag)")]) l.remove();
     if (!session?.connection) return;
     const c = nodeEl(session.connection.clientId);
     const s = nodeEl(session.connection.serverId);
