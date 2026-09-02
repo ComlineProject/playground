@@ -83,73 +83,14 @@ main {
   min-height: 2rem;
 }
 
-/* A transparent textarea over a highlighted <pre>; both share exact metrics. */
-.editor {
-  position: relative;
+/* CodeMirror mount — the editor colours / metrics live in editor.ts's theme. */
+#editor {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg);
 }
-
-.editor-layer {
-  margin: 0;
-  position: absolute;
-  inset: 0;
-  overflow: auto;
-  padding: 0.9rem 1rem;
-  border: 0;
-  font: inherit;
-  font-size: 0.85rem;
-  line-height: 1.55;
-  tab-size: 4;
-  white-space: pre;
-  word-wrap: normal;
-}
-
-#editor-hl {
-  color: var(--fg);
-  pointer-events: none;
-  z-index: 0;
-}
-#editor-hl code {
-  font: inherit;
-}
-
-#editor {
-  z-index: 1;
-  resize: none;
-  outline: none;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--fg);
-}
-#editor::selection {
-  background: #3d59a1;
-}
-
-/* token colours */
-.tok-kw {
-  color: #bb9af7;
-}
-.tok-type {
-  color: #7dcfff;
-}
-.tok-str {
-  color: #9ece6a;
-}
-.tok-comment {
-  color: #565f89;
-  font-style: italic;
-}
-.tok-ann {
-  color: #e0af68;
-}
-.tok-num {
-  color: #ff9e64;
-}
-.tok-punct {
-  color: var(--muted);
+.cm-editor {
+  height: 100%;
 }
 
 .tabs {

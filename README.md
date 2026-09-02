@@ -2,7 +2,8 @@
 
 Type a `.comline` schema, see the diagnostics, the frozen IR, and the generated
 code — live, in the browser. Runs the **actual** `comline-core` +
-`comline-codegen` (compiled to WASM), so what you see matches the CLI.
+`comline-codegen` + the `comline-language-server` analysis (compiled to WASM),
+so what you see matches the CLI and `comline-lsp`.
 
 Static — deploys to GitHub Pages, no server.
 
@@ -12,9 +13,12 @@ Static — deploys to GitHub Pages, no server.
 wasm/   comline-playground-wasm — the Rust crate, wasm-bindgen surface
           compile(source)                -> { ok, diagnostics, ir, units }
           generate(source, target, mode) -> { files, error }
+          semantic_tokens / hover / completions   — the LSP handlers verbatim
         deps: comline-core, comline-codegen, comline-codegen-rust,
-              comline-codegen-typescript (all by git rev)
-app/    a Vite + vanilla-TS static site; the WASM runs in a Web Worker
+              comline-codegen-typescript, comline-language-server (git rev)
+app/    a Vite site; a CodeMirror 6 editor whose highlighting, diagnostics,
+        hover and autocomplete are all fed from the WASM (i.e. the LSP).
+        The WASM runs in a Web Worker.
 .github/workflows/deploy.yml   build WASM → build site → deploy to Pages
 ```
 
@@ -38,9 +42,9 @@ to Pages. Enable Pages → "GitHub Actions" in the repo settings once.
 ## Scope (v1)
 
 One schema, namespace `main`; `code` and `lib` modes; `rust` and `typescript`
-targets. Multi-file packages, a real editor (CodeMirror), a runtime demo, and
-docs embedding are follow-ups — see `ComlineProject/docs` → Design → *Playground
-& tutorial*.
+targets. Multi-file packages, config (`config.idp` / `comline.toml`) input, a
+runtime demo, and docs embedding are follow-ups — see `ComlineProject/docs` →
+Design → *Playground & tutorial*.
 
 ## License
 
