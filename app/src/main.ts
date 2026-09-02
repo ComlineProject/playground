@@ -72,6 +72,7 @@ const tabbarEl = $<HTMLDivElement>("#tabbar");
 const treeEl = $<HTMLDivElement>("#tree");
 const treeAddEl = $<HTMLButtonElement>("#tree-add");
 const editorEl = $<HTMLDivElement>("#editor");
+const editorEmptyEl = $<HTMLDivElement>("#editor-empty");
 
 type View = "problems" | "ir" | "output";
 let currentView: View = "problems";
@@ -128,9 +129,11 @@ const bridge: EditorBridge = {
 const ctx: EditorContext = {
   bridge,
   project,
-  activeName: () => activeFile().name,
+  activeName: () => activeFile()?.name ?? "",
   onDocChanged: (d) => {
-    activeFile().doc = d;
+    const f = activeFile();
+    if (!f) return; // the blank scratch buffer shown when no file is open
+    f.doc = d;
     scheduleRefresh();
   },
 };
@@ -143,6 +146,8 @@ function activate(id: string) {
   if (cur) cur.state = view.state;
   activeId = id;
   view.setState(activeFile().state);
+  editorEl.classList.remove("is-hidden");
+  editorEmptyEl.classList.add("is-hidden");
   renderTabs();
   renderFileTree();
   if (currentView === "ir") renderView();
@@ -156,17 +161,30 @@ function openFile(id: string) {
 }
 
 function closeTab(id: string) {
-  if (openIds.length <= 1) return;
   const i = openIds.indexOf(id);
   if (i < 0) return;
   if (id === activeId) activeFile().state = view.state; // keep edits for a reopen
   openIds.splice(i, 1);
-  if (id === activeId) {
+  if (id !== activeId) {
+    renderTabs();
+  } else if (openIds.length > 0) {
     activeId = "";
     activate(openIds[Math.min(i, openIds.length - 1)]);
   } else {
-    renderTabs();
+    showNoFile();
   }
+}
+
+/// No open tab: hide the editor behind a placeholder that points at the tree.
+/// The last-shown buffer stays mounted but hidden; the next `activate`
+/// replaces it.
+function showNoFile() {
+  activeId = "";
+  editorEl.classList.add("is-hidden");
+  editorEmptyEl.classList.remove("is-hidden");
+  renderTabs();
+  renderFileTree();
+  if (currentView === "ir") renderView();
 }
 
 function jumpTo(fileName: string, pos: LspPosition) {
@@ -276,17 +294,15 @@ function renderTabs() {
       e.preventDefault();
       renameFile(id);
     });
-    if (openIds.length > 1) {
-      const x = document.createElement("span");
-      x.className = "tab-x";
-      x.textContent = "×";
-      x.title = "close";
-      x.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeTab(id);
-      });
-      tab.append(x);
-    }
+    const x = document.createElement("span");
+    x.className = "tab-x";
+    x.textContent = "×";
+    x.title = "close";
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeTab(id);
+    });
+    tab.append(x);
     tabbarEl.append(tab);
   }
 }
@@ -446,8 +462,13 @@ function renderProblems() {
 }
 
 function renderIr() {
-  const rep = lastProject?.files.find((f) => f.path === activeFile().name);
-  const head = `<div class="file-name">${escapeHtml(activeFile().name)}</div>`;
+  const f = activeFile();
+  if (!f) {
+    viewEl.innerHTML = `<p class="muted">no file open</p>`;
+    return;
+  }
+  const rep = lastProject?.files.find((r) => r.path === f.name);
+  const head = `<div class="file-name">${escapeHtml(f.name)}</div>`;
   viewEl.innerHTML = rep?.ir
     ? head + `<pre class="code">${escapeHtml(rep.ir)}</pre>`
     : head + `<p class="muted">file does not parse</p>`;

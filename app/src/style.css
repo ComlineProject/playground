@@ -171,6 +171,21 @@ main {
   height: 100%;
 }
 
+.is-hidden {
+  display: none !important;
+}
+.empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 /* ── file tree (bottom of the editor pane) ───────────────────────────── */
 .tree-panel {
   flex: 0 0 190px;
