@@ -496,3 +496,23 @@ test("2b — a node hosts a client and a server; the grouped gateway relays a ca
 
   sim.destroy();
 });
+
+test("2b — the inspector adds a second instance to a box (a gateway without dragging)", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+
+  fire(sim.el.querySelector(".sim-node") as HTMLElement, "click");
+  const addSel = sim.el.querySelector(".add-inst-sel") as HTMLSelectElement;
+  assert.ok(addSel, "the box section offers an add-instance select");
+  const clientOpt = [...addSel.options].find((o) => o.textContent === "Chat · client")!;
+  pick(addSel, clientOpt.value);
+  await tick();
+
+  const groups = sim.el.querySelectorAll(".sim-node-group");
+  assert.equal(groups.length, 1, "still a single box");
+  assert.equal(groups[0].querySelectorAll(".sim-node").length, 2, "now hosting two instances");
+  sim.destroy();
+});

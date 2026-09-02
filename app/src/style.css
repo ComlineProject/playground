@@ -574,6 +574,10 @@ body.mode-simulate #gen-controls {
 .sim-node-group:active {
   cursor: grabbing;
 }
+.sim-node-group.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
 .group-cap {
   padding: 0.25rem 0.6rem 0;
   font-size: 0.62rem;
