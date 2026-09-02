@@ -213,6 +213,37 @@ main {
   letter-spacing: 0.09em;
   color: var(--muted);
 }
+.tree-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.tree-toggle:hover {
+  color: var(--fg);
+}
+.tree-head .tree-caret {
+  font-size: 0.55rem;
+}
+
+/* collapsed: only the header shows */
+.tree-panel.collapsed {
+  flex: 0 0 auto;
+}
+.tree-panel.collapsed .filetree,
+.tree-panel.collapsed .problems-body,
+.tree-panel.collapsed .gen-tree {
+  display: none;
+}
+
 .icon-btn {
   font: inherit;
   font-size: 0.9rem;
