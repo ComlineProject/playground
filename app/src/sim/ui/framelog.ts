@@ -21,10 +21,27 @@ export function frameLog(): FrameLog {
   head.className = "sim-frames-head";
   const title = document.createElement("span");
   title.textContent = "frames";
+
+  // kind filter — a toggle per row kind; hidden kinds persist across attaches.
+  const hidden = new Set<string>();
+  const filters = document.createElement("div");
+  filters.className = "frame-filters";
+  for (const k of ["handshake", "request", "response"]) {
+    const b = document.createElement("button");
+    b.className = "frame-filter on";
+    b.dataset.kind = k;
+    b.textContent = k;
+    b.addEventListener("click", () => {
+      if (hidden.delete(k)) b.classList.add("on");
+      else (hidden.add(k), b.classList.remove("on"));
+      applyFilter();
+    });
+    filters.append(b);
+  }
   const clear = document.createElement("button");
   clear.className = "icon-btn";
   clear.textContent = "clear";
-  head.append(title, clear);
+  head.append(title, filters, clear);
 
   const list = document.createElement("div");
   list.className = "sim-frames-list";
@@ -35,6 +52,12 @@ export function frameLog(): FrameLog {
   let ctx: DecodeCtx | null = null;
   let prevAt = 0;
   let first = true;
+
+  function applyFilter() {
+    for (const r of list.querySelectorAll<HTMLElement>(".frame-row")) {
+      r.hidden = hidden.has(r.dataset.kind ?? "");
+    }
+  }
 
   const empty = () => {
     const p = document.createElement("p");
@@ -51,6 +74,8 @@ export function frameLog(): FrameLog {
 
     const row = document.createElement("details");
     row.className = `frame-row frame-${detail.kind}`;
+    row.dataset.kind = detail.kind;
+    row.hidden = hidden.has(detail.kind);
 
     const summary = document.createElement("summary");
     summary.append(
