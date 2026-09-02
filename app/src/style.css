@@ -719,50 +719,26 @@ body.mode-simulate #gen-controls {
   width: 100%;
 }
 
-/* frame list */
-.sim-frames-head {
-  padding: 0.3rem 0.7rem;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--muted);
+.mono {
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
 }
+
+/* ── frame inspector (1e) ─────────────────────────────────────────────── */
 .sim-frames-list {
   flex: 1;
   overflow: auto;
   padding: 0 0.4rem 0.4rem;
   font-size: 0.72rem;
 }
-.frame-row {
-  display: grid;
-  grid-template-columns: 3ch 1fr 6rem 4rem;
-  gap: 0.6rem;
-  padding: 0.18rem 0.3rem;
-  border-bottom: 1px solid var(--border);
-}
-.frame-row .frame-seq {
-  color: var(--muted);
-}
-.frame-row .frame-kind {
-  color: var(--accent);
-}
-.frame-row .frame-len {
-  color: var(--muted);
-  text-align: right;
-}
-.frame-handshake .frame-kind {
-  color: var(--muted);
-}
-
-.mono {
-  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
-}
-
-/* ── frame inspector (1e) ─────────────────────────────────────────────── */
 .sim-frames-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
 }
 .sim-frames-head .icon-btn {
   font-size: 0.68rem;
@@ -777,14 +753,21 @@ body.mode-simulate #gen-controls {
 }
 details.frame-row > summary {
   display: grid;
-  grid-template-columns: 3ch 1fr 5.5rem 5rem 5rem 4rem;
+  grid-template-columns: 3ch minmax(6rem, 1fr) 5.5rem 5rem 5rem 4rem;
   gap: 0.5rem;
+  align-items: baseline;
   padding: 0.2rem 0.4rem;
   cursor: pointer;
   list-style: none;
 }
 details.frame-row > summary::-webkit-details-marker {
   display: none;
+}
+details.frame-row > summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .frame-row .frame-seq {
   color: var(--muted);
