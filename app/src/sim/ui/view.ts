@@ -18,6 +18,7 @@ import {
   rebuild,
   removeConnection,
   removeInstance,
+  renameNode,
   resyncInstance,
   setBehavior,
   type Connection,
@@ -186,11 +187,33 @@ export function createSim(): SimView {
     g.dataset.nodeId = nd.id;
     g.style.left = `${nd.x}px`;
     g.style.top = `${nd.y}px`;
-    if (nd.instanceIds.length > 1) {
-      const cap = div("group-cap mono");
-      cap.textContent = `${nd.label} · ${nd.instanceIds.length}`;
-      g.append(cap);
-    }
+
+    // header — the machine's name; double-click to rename.
+    const cap = div("group-cap mono");
+    const count = nd.instanceIds.length > 1 ? ` · ${nd.instanceIds.length}` : "";
+    cap.textContent = nd.label + count;
+    cap.title = "double-click to rename";
+    cap.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      const input = document.createElement("input");
+      input.className = "group-rename mono";
+      input.value = nd.label;
+      input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+      const commit = (save: boolean) => {
+        if (save) renameNode(session!, nd.id, input.value);
+        renderCanvas();
+      };
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") commit(true);
+        else if (ev.key === "Escape") commit(false);
+      });
+      input.addEventListener("blur", () => commit(true));
+      cap.replaceChildren(input);
+      input.focus?.();
+      input.select?.();
+    });
+    g.append(cap);
+
     for (const id of nd.instanceIds) {
       const inst = session!.instances.find((i) => i.id === id);
       if (inst) g.append(instRow(inst));
@@ -471,7 +494,7 @@ export function createSim(): SimView {
     // ── this box (add a second instance → a gateway) ──
     const nd = session.nodes.find((x) => x.id === sel.nodeId);
     if (nd) {
-      inspectorEl.append(section("box"));
+      inspectorEl.append(section(`box · ${nd.label}`));
       if (nd.instanceIds.length > 1) {
         inspectorEl.append(
           muted(`${nd.instanceIds.length} instances: ` + nd.instanceIds

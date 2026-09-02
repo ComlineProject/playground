@@ -579,11 +579,24 @@ body.mode-simulate #gen-controls {
   outline-offset: 2px;
 }
 .group-cap {
-  padding: 0.25rem 0.6rem 0;
+  padding: 0.28rem 0.6rem 0.24rem;
   font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.group-rename {
+  width: 100%;
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 0.2rem;
 }
 
 /* one instance inside the box */

@@ -546,3 +546,25 @@ test("2b — each instance in a shared box is individually selectable", async ()
   }
   sim.destroy();
 });
+
+test("2b — a box is named `Machine N` and its header renames on double-click", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  drop(sim.el.querySelector(".sim-canvas")!, { schemaNs: "chat", protocol: "Chat", role: "server" });
+
+  const cap = () => sim.el.querySelector(".sim-node-group .group-cap") as HTMLElement;
+  assert.match(cap().textContent!, /^Machine \d+$/, "the default box name is Machine N");
+
+  fire(cap(), "dblclick");
+  const input = sim.el.querySelector(".group-rename") as HTMLInputElement;
+  assert.ok(input, "double-click opens a rename field");
+  assert.match(input.value, /^Machine \d+$/);
+  input.value = "gateway";
+  fire(input, "blur");
+  assert.equal(cap().textContent, "gateway", "the header shows the new name");
+
+  fire(sim.el.querySelector(".sim-node") as HTMLElement, "click");
+  assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /box · gateway/i);
+  sim.destroy();
+});
