@@ -9,31 +9,34 @@
   <body>
     <header>
       <h1>Comline Playground</h1>
+      <div class="controls">
+        <div class="seg" id="mode" role="tablist" aria-label="generation mode">
+          <button data-mode="code" class="active">code</button>
+          <button data-mode="lib">lib</button>
+        </div>
+        <select id="target" aria-label="target language">
+          <option value="rust">rust</option>
+          <option value="typescript">typescript</option>
+        </select>
+      </div>
       <span id="status" class="status">loading…</span>
     </header>
 
     <main>
       <section class="pane">
-        <div class="pane-head">schema</div>
+        <div class="pane-head">
+          <span id="active-name">schema</span>
+        </div>
         <div id="editor"></div>
+        <div class="files" id="files"></div>
       </section>
 
       <section class="pane">
         <div class="pane-head">
           <div class="tabs" id="tabs">
-            <button data-view="diagnostics" class="active">diagnostics</button>
+            <button data-view="problems" class="active">problems</button>
             <button data-view="ir">IR</button>
             <button data-view="output">generated</button>
-          </div>
-          <div class="output-controls" id="output-controls" hidden>
-            <select id="target">
-              <option value="rust">rust</option>
-              <option value="typescript">typescript</option>
-            </select>
-            <select id="mode">
-              <option value="code">code</option>
-              <option value="lib">lib</option>
-            </select>
           </div>
         </div>
         <div id="view" class="view"></div>

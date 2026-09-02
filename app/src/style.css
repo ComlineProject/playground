@@ -29,7 +29,7 @@ body {
 
 header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 1rem;
   padding: 0.6rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -42,7 +42,48 @@ header h1 {
   letter-spacing: 0.02em;
 }
 
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.seg button {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+.seg button.active {
+  color: var(--fg);
+  background: var(--bg-2);
+}
+
+#target {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+}
+
 .status {
+  margin-left: auto;
   font-size: 0.8rem;
   color: var(--muted);
 }
@@ -82,6 +123,9 @@ main {
   border-bottom: 1px solid var(--border);
   min-height: 2rem;
 }
+#active-name {
+  color: var(--fg);
+}
 
 /* CodeMirror mount — the editor colours / metrics live in editor.ts's theme. */
 #editor {
@@ -93,12 +137,68 @@ main {
   height: 100%;
 }
 
+/* virtual file strip */
+.files {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+}
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.file-chip:hover {
+  color: var(--fg);
+}
+.file-chip.active {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--border);
+}
+.file-x {
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+}
+.file-x:hover {
+  color: var(--err);
+}
+.file-add {
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.45rem;
+  cursor: pointer;
+}
+.file-add:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+
 .tabs {
   display: flex;
   gap: 0.25rem;
 }
-.tabs button,
-.output-controls select {
+.tabs button {
   font: inherit;
   font-size: 0.75rem;
   color: var(--muted);
@@ -114,11 +214,6 @@ main {
 .tabs button.active {
   color: var(--fg);
   border-color: var(--border);
-  background: var(--bg);
-}
-.output-controls select {
-  border-color: var(--border);
-  color: var(--fg);
   background: var(--bg);
 }
 
@@ -144,6 +239,10 @@ main {
   padding: 0.3rem 0;
   border-bottom: 1px solid var(--border);
   color: var(--err);
+  cursor: pointer;
+}
+.diagnostics li:hover {
+  background: var(--bg-2);
 }
 .diagnostics .loc {
   color: var(--muted);
