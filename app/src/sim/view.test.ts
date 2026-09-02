@@ -516,3 +516,33 @@ test("2b — the inspector adds a second instance to a box (a gateway without dr
   assert.equal(groups[0].querySelectorAll(".sim-node").length, 2, "now hosting two instances");
   sim.destroy();
 });
+
+test("2b — each instance in a shared box is individually selectable", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  drop(sim.el.querySelector(".sim-canvas")!, { schemaNs: "chat", protocol: "Chat", role: "server" });
+
+  fire(sim.el.querySelector(".sim-node") as HTMLElement, "click");
+  const addSel = sim.el.querySelector(".add-inst-sel") as HTMLSelectElement;
+  pick(addSel, [...addSel.options].find((o) => o.textContent === "Chat · client")!.value);
+  await tick();
+
+  const rowNames = () =>
+    [...sim.el.querySelectorAll(".sim-node-group .sim-node")].map(
+      (r) => r.querySelector(".node-name")!.textContent!,
+    );
+  assert.equal(rowNames().length, 2, "one box, two rows");
+
+  for (const target of rowNames()) {
+    const row = [...sim.el.querySelectorAll(".sim-node-group .sim-node")].find(
+      (r) => r.querySelector(".node-name")!.textContent === target,
+    )!;
+    fire(row, "click");
+    assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, new RegExp(`instance\\s*${target}`));
+    const selected = [...sim.el.querySelectorAll(".sim-node-group .sim-node.selected")];
+    assert.equal(selected.length, 1, "exactly one row is marked selected");
+    assert.equal(selected[0].querySelector(".node-name")!.textContent, target);
+  }
+  sim.destroy();
+});
