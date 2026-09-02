@@ -1,8 +1,15 @@
+import { StreamLanguage } from "@codemirror/language";
 import { forceLinting } from "@codemirror/lint";
-import type { EditorState } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 
-import { makeState, mountEditor, type EditorBridge, type EditorContext } from "./editor.ts";
+import {
+  makeState,
+  mountEditor,
+  readOnlyExtensions,
+  type EditorBridge,
+  type EditorContext,
+} from "./editor.ts";
 import type {
   CompileProjectResult,
   CompletionItem,
@@ -86,6 +93,15 @@ let genFiles: GeneratedFile[] | null = null;
 let genActivePath: string | null = null;
 const genCollapsed = new Set<string>(); // collapsed folders inside the gen tree
 let genPanelCollapsed = false; // the whole gen tree panel
+
+// The generated-code viewer: one persistent read-only editor, its grammar
+// swapped in through a Compartment as lazy `@codemirror/lang-*` chunks resolve.
+let genView: EditorView | null = null;
+let genShownKey = "";
+let genRev = 0; // bumped each regenerate, so re-selecting the same file repaints
+const langCompartment = new Compartment();
+const langCache = new Map<string, Extension | null>();
+const langLoading = new Set<string>();
 
 // ── worker plumbing ─────────────────────────────────────────────────────
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -432,8 +448,10 @@ function renderFileTree() {
 // ── panels ─────────────────────────────────────────────────────────────
 function renderView() {
   viewEl.classList.toggle("split", currentView === "output");
-  if (currentView === "ir") renderIr();
-  else void renderOutput();
+  if (currentView === "ir") {
+    destroyGenCode();
+    renderIr();
+  } else void renderOutput();
 }
 
 // The problems panel sits under the file tree — always shown, not a tab.
@@ -479,7 +497,10 @@ function renderIr() {
 }
 
 async function renderOutput() {
-  if (!genFiles) viewEl.innerHTML = `<p class="muted">generating…</p>`;
+  if (!genFiles) {
+    destroyGenCode();
+    viewEl.innerHTML = `<p class="muted">generating…</p>`;
+  }
   const res = await unwrap<GenerateResult>(
     { cmd: "generateProject", files: project(), target: targetSel.value, mode },
     { files: [], error: "wasm error" },
@@ -487,35 +508,93 @@ async function renderOutput() {
   if (currentView !== "output") return;
   if (res.error) {
     genFiles = null;
+    destroyGenCode();
     viewEl.classList.remove("split");
     viewEl.innerHTML = `<p class="err">${escapeHtml(res.error)}</p>`;
     return;
   }
   if (res.files.length === 0) {
     genFiles = null;
+    destroyGenCode();
     viewEl.classList.remove("split");
     viewEl.innerHTML = `<p class="muted">nothing generated</p>`;
     return;
   }
   genFiles = res.files;
+  genRev++;
   if (!genActivePath || !genFiles.some((f) => f.path === genActivePath)) {
     genActivePath = genFiles[0].path;
   }
   paintOutput();
 }
 
+// ── generated-code grammar loading ────────────────────────────────────────
+function extOf(path: string): string {
+  const m = /\.([a-z0-9]+)$/i.exec(path);
+  return m ? m[1].toLowerCase() : "";
+}
+
+async function loadLang(ext: string): Promise<Extension | null> {
+  switch (ext) {
+    case "rs":
+      return (await import("@codemirror/lang-rust")).rust();
+    case "ts":
+    case "tsx":
+    case "mts":
+    case "cts":
+      return (await import("@codemirror/lang-javascript")).javascript({ typescript: true });
+    case "js":
+    case "jsx":
+    case "mjs":
+      return (await import("@codemirror/lang-javascript")).javascript();
+    case "json":
+      return (await import("@codemirror/lang-json")).json();
+    case "toml": {
+      const mod = await import("@codemirror/legacy-modes/mode/toml");
+      return StreamLanguage.define(mod.toml);
+    }
+    default:
+      return null;
+  }
+}
+
+/// The grammar for `path`'s extension, or `null` until its lazy chunk resolves
+/// — the first miss kicks off the import and repaints when it lands.
+function langFor(path: string): Extension | null {
+  const ext = extOf(path);
+  if (langCache.has(ext)) return langCache.get(ext) ?? null;
+  if (!langLoading.has(ext)) {
+    langLoading.add(ext);
+    void loadLang(ext).then((lang) => {
+      langCache.set(ext, lang);
+      langLoading.delete(ext);
+      if (currentView === "output" && genActivePath && extOf(genActivePath) === ext) showGenCode();
+    });
+  }
+  return null;
+}
+
 function paintOutput() {
   if (!genFiles) return;
   viewEl.classList.add("split");
 
-  const codePane = document.createElement("div");
-  codePane.className = "gen-view";
-  const pre = document.createElement("pre");
-  pre.className = "code";
-  pre.textContent = genFiles.find((f) => f.path === genActivePath)?.contents ?? "";
-  codePane.append(pre);
+  // The code pane + its editor persist across repaints; only the tree rebuilds.
+  if (!viewEl.querySelector(".gen-view") || !genView) {
+    destroyGenCode();
+    const codePane = document.createElement("div");
+    codePane.className = "gen-view";
+    viewEl.replaceChildren(codePane);
+    genView = new EditorView({ parent: codePane });
+  }
+  const existing = viewEl.querySelector(".tree-panel");
+  if (existing) existing.replaceWith(buildGenPanel());
+  else viewEl.append(buildGenPanel());
 
-  // A tree panel at the bottom, mirroring the schema file tree on the left.
+  showGenCode();
+}
+
+/// The tree panel at the bottom of the generated pane (mirrors the schema tree).
+function buildGenPanel(): HTMLElement {
   const panel = document.createElement("div");
   panel.className = "tree-panel" + (genPanelCollapsed ? " collapsed" : "");
   const head = document.createElement("div");
@@ -537,9 +616,10 @@ function paintOutput() {
   path.className = "path";
   path.textContent = genActivePath ?? "";
   head.append(toggleBtn, path);
+
   const tree = document.createElement("div");
   tree.className = "gen-tree";
-  renderTreeInto(tree, buildTree(genFiles.map((f) => ({ path: f.path, data: f }))), {
+  renderTreeInto(tree, buildTree((genFiles ?? []).map((f) => ({ path: f.path, data: f }))), {
     collapsed: genCollapsed,
     isActive: (l) => l.full === genActivePath,
     onPick: (l) => {
@@ -552,8 +632,34 @@ function paintOutput() {
     },
   });
   panel.append(head, tree);
+  return panel;
+}
 
-  viewEl.replaceChildren(codePane, panel);
+/// Push the active generated file into the persistent editor. Same file (only
+/// the grammar changed) → reconfigure the language compartment in place, so
+/// scroll position survives a lazy grammar landing.
+function showGenCode() {
+  if (!genView || !genFiles) return;
+  const contents = genFiles.find((f) => f.path === genActivePath)?.contents ?? "";
+  const lang = langFor(genActivePath ?? "");
+  const key = (genActivePath ?? "") + "@" + genRev;
+  if (key === genShownKey) {
+    genView.dispatch({ effects: langCompartment.reconfigure(lang ?? []) });
+    return;
+  }
+  genShownKey = key;
+  genView.setState(
+    EditorState.create({
+      doc: contents,
+      extensions: [...readOnlyExtensions(), langCompartment.of(lang ?? [])],
+    }),
+  );
+}
+
+function destroyGenCode() {
+  genView?.destroy();
+  genView = null;
+  genShownKey = "";
 }
 
 function escapeHtml(s: string): string {

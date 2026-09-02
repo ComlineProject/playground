@@ -13,7 +13,13 @@ import {
   type CompletionSource,
 } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, indentUnit } from "@codemirror/language";
+import {
+  bracketMatching,
+  HighlightStyle,
+  indentUnit,
+  syntaxHighlighting,
+} from "@codemirror/language";
+import { tags as t } from "@lezer/highlight";
 import { linter, lintKeymap, type Diagnostic as CmDiagnostic } from "@codemirror/lint";
 import {
   EditorState,
@@ -261,6 +267,44 @@ const theme = EditorView.theme(
   },
   { dark: true },
 );
+
+// ── generated-code viewer ────────────────────────────────────────────────
+// One grammar-agnostic highlight style (Lezer tags → the schema editor's
+// palette), shared by every generated language.
+const generatedHighlightStyle = HighlightStyle.define([
+  { tag: [t.keyword, t.modifier, t.definitionKeyword, t.moduleKeyword, t.controlKeyword, t.operatorKeyword], color: "#bb9af7" },
+  { tag: [t.string, t.special(t.string), t.regexp], color: "#9ece6a" },
+  { tag: [t.comment], color: "#565f89", fontStyle: "italic" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "#ff9e64" },
+  { tag: [t.typeName, t.className, t.namespace], color: "#7dcfff" },
+  { tag: [t.propertyName, t.attributeName], color: "#7aa2f7" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "#7aa2f7" },
+  { tag: [t.operator, t.punctuation, t.bracket, t.separator, t.derefOperator], color: "#9aa5ce" },
+  { tag: [t.meta], color: "#e0af68" },
+  { tag: [t.self], color: "#f7768e" },
+  { tag: [t.variableName], color: "#e4e4ef" },
+  { tag: [t.invalid], color: "#f7768e" },
+]);
+
+const readOnlyTheme = EditorView.theme({
+  "&": { fontSize: "0.8rem" },
+  ".cm-scroller": { padding: "0.5rem 0" },
+  ".cm-content": { caretColor: "transparent" },
+});
+
+/// Extensions for the read-only generated-code pane. Reuses the schema
+/// editor's theme; the caller adds the language grammar through a Compartment.
+export function readOnlyExtensions(): Extension[] {
+  return [
+    lineNumbers(),
+    EditorState.readOnly.of(true),
+    EditorView.editable.of(false),
+    drawSelection(),
+    theme,
+    readOnlyTheme,
+    syntaxHighlighting(generatedHighlightStyle),
+  ];
+}
 
 /// One file's editor state — its own document and undo history. The playground
 /// swaps these into the single [`EditorView`] as the user switches files.
