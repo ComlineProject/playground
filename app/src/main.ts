@@ -73,9 +73,11 @@ const treeEl = $<HTMLDivElement>("#tree");
 const treeAddEl = $<HTMLButtonElement>("#tree-add");
 const editorEl = $<HTMLDivElement>("#editor");
 const editorEmptyEl = $<HTMLDivElement>("#editor-empty");
+const problemsEl = $<HTMLDivElement>("#problems");
+const problemsCountEl = $<HTMLSpanElement>("#problems-count");
 
-type View = "problems" | "ir" | "output";
-let currentView: View = "problems";
+type View = "ir" | "output";
+let currentView: View = "ir";
 let mode: "code" | "lib" = "code";
 let lastProject: CompileProjectResult | null = null;
 
@@ -429,18 +431,19 @@ function renderFileTree() {
 // ── panels ─────────────────────────────────────────────────────────────
 function renderView() {
   viewEl.classList.toggle("split", currentView === "output");
-  if (currentView === "problems") renderProblems();
-  else if (currentView === "ir") renderIr();
+  if (currentView === "ir") renderIr();
   else void renderOutput();
 }
 
+// The problems panel sits under the file tree — always shown, not a tab.
 function renderProblems() {
   const reports = lastProject?.files ?? [];
-  const units = reports.reduce((n, f) => n + f.units, 0);
   const rows = reports.flatMap((f) => f.diagnostics.map((d) => ({ file: f.path, d })));
+  problemsCountEl.textContent = rows.length ? String(rows.length) : "";
 
   if (rows.length === 0) {
-    viewEl.innerHTML = `<p class="ok">no problems — ${units} unit${
+    const units = reports.reduce((n, f) => n + f.units, 0);
+    problemsEl.innerHTML = `<p class="muted pad">no problems — ${units} unit${
       units === 1 ? "" : "s"
     } across ${files.length} file${files.length === 1 ? "" : "s"}</p>`;
     return;
@@ -458,7 +461,7 @@ function renderProblems() {
     li.addEventListener("click", () => jumpTo(file, d.range.start));
     ul.appendChild(li);
   }
-  viewEl.replaceChildren(ul);
+  problemsEl.replaceChildren(ul);
 }
 
 function renderIr() {
@@ -569,6 +572,7 @@ async function refresh() {
       ? "ok"
       : `${problems} problem${problems === 1 ? "" : "s"}`;
   statusEl.className = `status ${problems === 0 && !parseFail ? "ok" : "err"}`;
+  renderProblems();
   renderView();
 }
 

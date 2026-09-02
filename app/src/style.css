@@ -186,14 +186,22 @@ main {
   font-size: 0.8rem;
 }
 
-/* ── file tree (bottom of the editor pane) ───────────────────────────── */
+/* ── file tree + problems (bottom of the editor pane) ────────────────── */
 .tree-panel {
-  flex: 0 0 190px;
+  flex: 0 0 150px;
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: var(--bg-2);
   border-top: 1px solid var(--border);
+}
+.problems-panel {
+  flex: 0 0 160px;
+}
+.problems-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 .tree-head {
   display: flex;
@@ -338,10 +346,11 @@ main {
   padding: 0;
 }
 .diagnostics li {
-  padding: 0.3rem 0;
+  padding: 0.3rem 0.7rem;
   border-bottom: 1px solid var(--border);
   color: var(--err);
   cursor: pointer;
+  font-size: 0.78rem;
 }
 .diagnostics li:hover {
   background: var(--bg-2);
@@ -359,6 +368,11 @@ main {
 }
 .muted {
   color: var(--muted);
+}
+.pad {
+  padding: 0.5rem 0.7rem;
+  margin: 0;
+  font-size: 0.78rem;
 }
 
 .file-name {
