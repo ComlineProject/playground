@@ -6,7 +6,14 @@ import type { Behavior, SimOutcome } from "./generic.ts";
 import type { FnShape, SchemaShape } from "./shape.ts";
 import { zeroValue } from "./shape.ts";
 
-export type BehaviorKind = "reply" | "echo" | "increment" | "delay" | "raise" | "drop";
+export type BehaviorKind =
+  | "reply"
+  | "echo"
+  | "increment"
+  | "delay"
+  | "raise"
+  | "drop"
+  | "forward";
 
 export interface BehaviorSpec {
   kind: BehaviorKind;
@@ -139,6 +146,24 @@ export const BEHAVIORS: Record<BehaviorKind, BehaviorSpec> = {
     // Never settles — the client's `call` stays pending, like a hung peer.
     // The promise is released when the connection is closed and discarded.
     make: () => ({ run: () => new Promise<SimOutcome>(() => {}) }),
+  },
+
+  forward: {
+    kind: "forward",
+    label: "Forward to another server",
+    // Needs a reply to relay, and something to relay it over.
+    appliesTo: (fn) => !fn.oneway,
+    defaultConfig: (fn) => ({ viaConnectionId: "", targetFn: fn.name }),
+    make: (config, fn) => ({
+      run: async (ctx) => {
+        if (!ctx.forward) {
+          return { kind: "err", ordinal: 0, data: { error: "forwarding is only available in the engine" } };
+        }
+        const via = String(config.viaConnectionId ?? "");
+        if (!via) return { kind: "err", ordinal: 0, data: { error: "forward: pick a connection" } };
+        return ctx.forward(via, String(config.targetFn || fn.name), ctx.params);
+      },
+    }),
   },
 };
 
