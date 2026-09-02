@@ -7,6 +7,7 @@ import type {
   CompileProjectResult,
   CompletionItem,
   FileInput,
+  GeneratedFile,
   GenerateResult,
   Hover,
   LspPosition,
@@ -15,14 +16,6 @@ import type {
 
 // ── sample: two files, one `use`ing the other ────────────────────────────
 const SAMPLE_FILES: { name: string; doc: string }[] = [
-  {
-    name: "types.comline",
-    doc: `struct Message {
-    body: string
-    seq: u64
-}
-`,
-  },
   {
     name: "chat.comline",
     doc: `use types::Message
@@ -41,6 +34,14 @@ protocol Chat {
 }
 `,
   },
+  {
+    name: "types.comline",
+    doc: `struct Message {
+    body: string
+    seq: u64
+}
+`,
+  },
 ];
 
 // ── virtual file set ────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ interface SchemaFile {
 }
 
 let files: SchemaFile[] = [];
+let openIds: string[] = []; // files with an editor tab, in tab order
 let activeId = "";
 let uid = 0;
 const nextId = () => `f${++uid}`;
@@ -66,14 +68,20 @@ const viewEl = $<HTMLDivElement>("#view");
 const tabsEl = $<HTMLDivElement>("#tabs");
 const modeEl = $<HTMLDivElement>("#mode");
 const targetSel = $<HTMLSelectElement>("#target");
-const filesEl = $<HTMLDivElement>("#files");
-const activeNameEl = $<HTMLSpanElement>("#active-name");
+const tabbarEl = $<HTMLDivElement>("#tabbar");
+const treeEl = $<HTMLDivElement>("#tree");
+const treeAddEl = $<HTMLButtonElement>("#tree-add");
 const editorEl = $<HTMLDivElement>("#editor");
 
 type View = "problems" | "ir" | "output";
 let currentView: View = "problems";
 let mode: "code" | "lib" = "code";
 let lastProject: CompileProjectResult | null = null;
+
+const fileCollapsed = new Set<string>();
+let genFiles: GeneratedFile[] | null = null;
+let genActivePath: string | null = null;
+const genCollapsed = new Set<string>();
 
 // ── worker plumbing ─────────────────────────────────────────────────────
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -129,30 +137,52 @@ const ctx: EditorContext = {
 
 let view!: EditorView; // assigned in boot, before any handler can fire
 
-function switchTo(id: string) {
+function activate(id: string) {
   if (id === activeId) return;
-  const cur = activeFile();
+  const cur = files.find((f) => f.id === activeId);
   if (cur) cur.state = view.state;
   activeId = id;
   view.setState(activeFile().state);
-  activeNameEl.textContent = activeFile().name;
-  renderFiles();
+  renderTabs();
+  renderFileTree();
   if (currentView === "ir") renderView();
   forceLinting(view);
+}
+
+function openFile(id: string) {
+  if (!openIds.includes(id)) openIds.push(id);
+  activate(id);
+  renderTabs(); // in case `activate` early-returned on an already-active file
+}
+
+function closeTab(id: string) {
+  if (openIds.length <= 1) return;
+  const i = openIds.indexOf(id);
+  if (i < 0) return;
+  if (id === activeId) activeFile().state = view.state; // keep edits for a reopen
+  openIds.splice(i, 1);
+  if (id === activeId) {
+    activeId = "";
+    activate(openIds[Math.min(i, openIds.length - 1)]);
+  } else {
+    renderTabs();
+  }
 }
 
 function jumpTo(fileName: string, pos: LspPosition) {
   const f = files.find((x) => x.name === fileName);
   if (!f) return;
-  switchTo(f.id);
+  openFile(f.id);
   const { doc } = view.state;
   const line = doc.line(Math.min(pos.line + 1, doc.lines));
-  const at = Math.min(line.from + pos.character, line.to);
-  view.dispatch({ selection: { anchor: at }, scrollIntoView: true });
+  view.dispatch({
+    selection: { anchor: Math.min(line.from + pos.character, line.to) },
+    scrollIntoView: true,
+  });
   view.focus();
 }
 
-// ── file strip ─────────────────────────────────────────────────────────
+// ── files: add / rename / delete ───────────────────────────────────────
 function baseName(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(0, dot) : name;
@@ -176,20 +206,25 @@ function uniqueName(name: string, exceptId?: string): string {
 function promptName(title: string, def: string): string {
   const raw = window.prompt(title, def);
   if (raw === null) return "";
-  let name = raw.trim();
+  let name = raw.trim().replace(/^\/+|\/+$/g, "");
   if (!name) return "";
-  if (!name.includes(".")) name += ".comline";
+  if (!/\.[^./]+$/.test(name)) name += ".comline";
   return name;
 }
 
-function addFile() {
+function defaultName(): string {
   let n = files.length + 1;
   while (files.some((f) => f.name === `schema${n}.comline`)) n++;
-  const name = promptName("new schema file", `schema${n}.comline`);
+  return `schema${n}.comline`;
+}
+
+function addFile() {
+  const name = promptName("new schema file", defaultName());
   if (!name) return;
   const f: SchemaFile = { id: nextId(), name: uniqueName(name), doc: "", state: makeState("", ctx) };
   files.push(f);
-  switchTo(f.id);
+  openIds.push(f.id);
+  activate(f.id);
   scheduleRefresh();
 }
 
@@ -198,58 +233,186 @@ function renameFile(id: string) {
   const name = promptName("rename file", f.name);
   if (!name || name === f.name) return;
   f.name = uniqueName(name, f.id);
-  if (f.id === activeId) activeNameEl.textContent = f.name;
-  renderFiles();
+  renderTabs();
+  renderFileTree();
   forceLinting(view);
   scheduleRefresh();
 }
 
-function removeFile(id: string) {
+function deleteFile(id: string) {
   if (files.length <= 1) return;
-  const idx = files.findIndex((f) => f.id === id);
   const wasActive = id === activeId;
-  files.splice(idx, 1);
-  if (wasActive) switchTo(files[Math.min(idx, files.length - 1)].id);
-  else renderFiles();
+  files = files.filter((f) => f.id !== id);
+  const oi = openIds.indexOf(id);
+  if (oi >= 0) openIds.splice(oi, 1);
+  if (wasActive) {
+    activeId = "";
+    let nextId = openIds[Math.min(Math.max(oi, 0), openIds.length - 1)];
+    if (!nextId) {
+      nextId = files[0].id;
+      openIds.unshift(nextId);
+    }
+    activate(nextId);
+  } else {
+    renderTabs();
+    renderFileTree();
+  }
   scheduleRefresh();
 }
 
-function renderFiles() {
-  filesEl.replaceChildren();
-  for (const f of files) {
-    const chip = document.createElement("button");
-    chip.className = "file-chip" + (f.id === activeId ? " active" : "");
+// ── tab bar ────────────────────────────────────────────────────────────
+function renderTabs() {
+  tabbarEl.replaceChildren();
+  for (const id of openIds) {
+    const f = files.find((x) => x.id === id);
+    if (!f) continue;
+    const tab = document.createElement("div");
+    tab.className = "tab" + (id === activeId ? " active" : "");
     const label = document.createElement("span");
     label.textContent = f.name;
-    chip.appendChild(label);
-    chip.addEventListener("click", () => switchTo(f.id));
-    chip.addEventListener("dblclick", (e) => {
+    tab.append(label);
+    tab.addEventListener("click", () => activate(id));
+    tab.addEventListener("dblclick", (e) => {
       e.preventDefault();
-      renameFile(f.id);
+      renameFile(id);
     });
-    if (files.length > 1) {
+    if (openIds.length > 1) {
       const x = document.createElement("span");
-      x.className = "file-x";
+      x.className = "tab-x";
       x.textContent = "×";
-      x.title = "delete file";
+      x.title = "close";
       x.addEventListener("click", (e) => {
         e.stopPropagation();
-        removeFile(f.id);
+        closeTab(id);
       });
-      chip.appendChild(x);
+      tab.append(x);
     }
-    filesEl.appendChild(chip);
+    tabbarEl.append(tab);
   }
-  const add = document.createElement("button");
-  add.className = "file-add";
-  add.textContent = "+";
-  add.title = "add schema file";
-  add.addEventListener("click", addFile);
-  filesEl.appendChild(add);
+}
+
+// ── hierarchical tree (files + generated output) ───────────────────────
+interface Leaf<T> {
+  name: string;
+  full: string;
+  data: T;
+}
+interface TreeDir<T> {
+  name: string;
+  full: string;
+  dirs: TreeDir<T>[];
+  files: Leaf<T>[];
+}
+
+function buildTree<T>(items: { path: string; data: T }[]): TreeDir<T> {
+  const root: TreeDir<T> = { name: "", full: "", dirs: [], files: [] };
+  for (const { path, data } of items) {
+    const parts = path.split("/");
+    let dir = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      const full = dir.full ? `${dir.full}/${seg}` : seg;
+      let next = dir.dirs.find((d) => d.name === seg);
+      if (!next) {
+        next = { name: seg, full, dirs: [], files: [] };
+        dir.dirs.push(next);
+      }
+      dir = next;
+    }
+    dir.files.push({ name: parts[parts.length - 1], full: path, data });
+  }
+  const sort = (d: TreeDir<T>) => {
+    d.dirs.sort((a, b) => a.name.localeCompare(b.name));
+    d.files.sort((a, b) => a.name.localeCompare(b.name));
+    d.dirs.forEach(sort);
+  };
+  sort(root);
+  return root;
+}
+
+interface TreeOpts<T> {
+  collapsed: Set<string>;
+  isActive: (l: Leaf<T>) => boolean;
+  onPick: (l: Leaf<T>) => void;
+  onToggle: (full: string) => void;
+  onRename?: (l: Leaf<T>) => void;
+  onDelete?: (l: Leaf<T>) => void;
+}
+
+function renderTreeInto<T>(host: HTMLElement, root: TreeDir<T>, o: TreeOpts<T>) {
+  const indent = (depth: number) => `${0.4 + depth * 0.85}rem`;
+  const build = (dir: TreeDir<T>, depth: number): DocumentFragment => {
+    const frag = document.createDocumentFragment();
+    for (const d of dir.dirs) {
+      const open = !o.collapsed.has(d.full);
+      const row = document.createElement("div");
+      row.className = "tree-row dir";
+      row.style.paddingLeft = indent(depth);
+      const caret = document.createElement("span");
+      caret.className = "tree-caret";
+      caret.textContent = open ? "▾" : "▸";
+      const name = document.createElement("span");
+      name.textContent = d.name;
+      row.append(caret, name);
+      row.addEventListener("click", () => o.onToggle(d.full));
+      frag.append(row);
+      if (open) frag.append(build(d, depth + 1));
+    }
+    for (const leaf of dir.files) {
+      const row = document.createElement("div");
+      row.className = "tree-row" + (o.isActive(leaf) ? " active" : "");
+      row.style.paddingLeft = indent(depth);
+      const spacer = document.createElement("span");
+      spacer.className = "tree-spacer";
+      const name = document.createElement("span");
+      name.textContent = leaf.name;
+      row.append(spacer, name);
+      if (o.onDelete) {
+        const x = document.createElement("span");
+        x.className = "tree-x";
+        x.textContent = "×";
+        x.title = "delete";
+        x.addEventListener("click", (e) => {
+          e.stopPropagation();
+          o.onDelete!(leaf);
+        });
+        row.append(x);
+      }
+      row.addEventListener("click", () => o.onPick(leaf));
+      if (o.onRename)
+        row.addEventListener("dblclick", (e) => {
+          e.preventDefault();
+          o.onRename!(leaf);
+        });
+      frag.append(row);
+    }
+    return frag;
+  };
+  host.replaceChildren(build(root, 0));
+}
+
+function toggle(set: Set<string>, key: string) {
+  if (set.has(key)) set.delete(key);
+  else set.add(key);
+}
+
+function renderFileTree() {
+  renderTreeInto(treeEl, buildTree(files.map((f) => ({ path: f.name, data: f }))), {
+    collapsed: fileCollapsed,
+    isActive: (l) => l.data.id === activeId,
+    onPick: (l) => openFile(l.data.id),
+    onToggle: (full) => {
+      toggle(fileCollapsed, full);
+      renderFileTree();
+    },
+    onRename: (l) => renameFile(l.data.id),
+    onDelete: files.length > 1 ? (l) => deleteFile(l.data.id) : undefined,
+  });
 }
 
 // ── panels ─────────────────────────────────────────────────────────────
 function renderView() {
+  viewEl.classList.toggle("split", currentView === "output");
   if (currentView === "problems") renderProblems();
   else if (currentView === "ir") renderIr();
   else void renderOutput();
@@ -291,27 +454,58 @@ function renderIr() {
 }
 
 async function renderOutput() {
-  viewEl.innerHTML = `<p class="muted">generating…</p>`;
+  if (!genFiles) viewEl.innerHTML = `<p class="muted">generating…</p>`;
   const res = await unwrap<GenerateResult>(
     { cmd: "generateProject", files: project(), target: targetSel.value, mode },
     { files: [], error: "wasm error" },
   );
   if (currentView !== "output") return;
   if (res.error) {
+    genFiles = null;
+    viewEl.classList.remove("split");
     viewEl.innerHTML = `<p class="err">${escapeHtml(res.error)}</p>`;
     return;
   }
   if (res.files.length === 0) {
+    genFiles = null;
+    viewEl.classList.remove("split");
     viewEl.innerHTML = `<p class="muted">nothing generated</p>`;
     return;
   }
-  viewEl.innerHTML = res.files
-    .map(
-      (f) =>
-        `<div class="file"><div class="file-name">${escapeHtml(f.path)}</div>` +
-        `<pre class="code">${escapeHtml(f.contents)}</pre></div>`,
-    )
-    .join("");
+  genFiles = res.files;
+  if (!genActivePath || !genFiles.some((f) => f.path === genActivePath)) {
+    genActivePath = genFiles[0].path;
+  }
+  paintOutput();
+}
+
+function paintOutput() {
+  if (!genFiles) return;
+  viewEl.classList.add("split");
+
+  const treePane = document.createElement("div");
+  treePane.className = "gen-tree";
+  renderTreeInto(treePane, buildTree(genFiles.map((f) => ({ path: f.path, data: f }))), {
+    collapsed: genCollapsed,
+    isActive: (l) => l.full === genActivePath,
+    onPick: (l) => {
+      genActivePath = l.full;
+      paintOutput();
+    },
+    onToggle: (full) => {
+      toggle(genCollapsed, full);
+      paintOutput();
+    },
+  });
+
+  const codePane = document.createElement("div");
+  codePane.className = "gen-view";
+  const pre = document.createElement("pre");
+  pre.className = "code";
+  pre.textContent = genFiles.find((f) => f.path === genActivePath)?.contents ?? "";
+  codePane.append(pre);
+
+  viewEl.replaceChildren(treePane, codePane);
 }
 
 function escapeHtml(s: string): string {
@@ -360,21 +554,26 @@ modeEl.addEventListener("click", (e) => {
   if (!btn) return;
   mode = btn.dataset.mode as "code" | "lib";
   for (const b of modeEl.querySelectorAll("button")) b.classList.toggle("active", b === btn);
+  genFiles = null;
   if (currentView === "output") void renderOutput();
 });
 
 targetSel.addEventListener("change", () => {
+  genFiles = null;
   if (currentView === "output") void renderOutput();
 });
+
+treeAddEl.addEventListener("click", addFile);
 
 // ── boot ───────────────────────────────────────────────────────────────
 for (const s of SAMPLE_FILES) {
   files.push({ id: nextId(), name: s.name, doc: s.doc, state: makeState(s.doc, ctx) });
 }
+openIds = files.map((f) => f.id);
 activeId = files[0].id;
 view = mountEditor(editorEl, files[0].state);
-activeNameEl.textContent = files[0].name;
-renderFiles();
+renderTabs();
+renderFileTree();
 
 statusEl.textContent = "compiling…";
 void refresh();
