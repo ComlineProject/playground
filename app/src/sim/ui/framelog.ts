@@ -1,7 +1,8 @@
 /// The frame inspector under the canvas. A row per frame — direction, kind,
-/// function, Δ since the previous frame, byte length — expanding to the decoded
-/// envelope, the raw hex, and the framing name. Handshake frames read
-/// distinctly; a refused connection gets its own row.
+/// function, round-trip time (on the reply, measured from its own request by
+/// id — not wall-clock gap between frames, which is mostly idle time), byte
+/// length — expanding to the decoded envelope, the raw hex, and the framing
+/// name. Handshake frames read distinctly; a refused connection gets its own row.
 
 import { describeFrame, toHex, type DecodeCtx } from "../framedecode.ts";
 import type { Frame, Tap } from "../transport.ts";
@@ -50,8 +51,8 @@ export function frameLog(): FrameLog {
 
   let unsub: (() => void) | null = null;
   let ctx: DecodeCtx | null = null;
-  let prevAt = 0;
-  let first = true;
+  // request id → when its request frame was sent, so a reply shows round-trip.
+  const sentAt = new Map<string, number>();
 
   function applyFilter() {
     for (const r of list.querySelectorAll<HTMLElement>(".frame-row")) {
@@ -68,9 +69,17 @@ export function frameLog(): FrameLog {
 
   function addRow(f: Frame) {
     const detail = ctx ? describeFrame(f, ctx) : { kind: f.kind, framing: "?" };
-    const delta = first ? 0 : Math.round(f.at - prevAt);
-    prevAt = f.at;
-    first = false;
+
+    // Round-trip: recorded on the request, read (and shown) on the reply.
+    let rttText = "";
+    if (detail.requestId) {
+      if (detail.kind === "request") {
+        sentAt.set(detail.requestId, f.at);
+      } else if (detail.kind === "response" && sentAt.has(detail.requestId)) {
+        rttText = `${Math.round(f.at - sentAt.get(detail.requestId)!)} ms`;
+        sentAt.delete(detail.requestId);
+      }
+    }
 
     const row = document.createElement("details");
     row.className = `frame-row frame-${detail.kind}`;
@@ -78,12 +87,14 @@ export function frameLog(): FrameLog {
     row.hidden = hidden.has(detail.kind);
 
     const summary = document.createElement("summary");
+    const rtt = cell("frame-delta", rttText);
+    if (rttText) rtt.title = "round-trip time";
     summary.append(
       cell("frame-seq", String(f.seq).padStart(3, "0")),
       cell("frame-dir", `${f.from} → ${f.to}`),
       cell("frame-kind", detail.kind),
       cell("frame-fn", detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : "")),
-      cell("frame-delta", delta ? `+${delta} ms` : ""),
+      rtt,
       cell("frame-len", `${f.bytes.length} B`),
     );
     row.append(summary);
@@ -130,8 +141,7 @@ export function frameLog(): FrameLog {
 
   clear.addEventListener("click", () => {
     list.replaceChildren();
-    prevAt = 0;
-    first = true;
+    sentAt.clear();
   });
 
   return {
@@ -140,8 +150,7 @@ export function frameLog(): FrameLog {
       unsub?.();
       unsub = null;
       ctx = decodeCtx ?? null;
-      prevAt = 0;
-      first = true;
+      sentAt.clear();
       list.replaceChildren();
       if (!tap) {
         list.append(empty());
