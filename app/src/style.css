@@ -479,6 +479,10 @@ body.mode-simulate #gen-controls {
   text-align: center;
   pointer-events: none;
 }
+/* `display: flex` above outranks the UA `[hidden]` rule — restore it */
+.canvas-hint[hidden] {
+  display: none;
+}
 .sim-inspector {
   grid-area: inspector;
   border-left: 1px solid var(--border);
