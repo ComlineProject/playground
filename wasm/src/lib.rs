@@ -43,8 +43,9 @@ use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, Url};
 /// chosen in the UI, not here.
 const CONGREGATION: &str = "congregation playground\nspecification_version = 1\n";
 
-/// File-name suffixes stripped when turning a virtual file name into a namespace.
-const SCHEMA_EXTS: &[&str] = &[".comline", ".ids", ".idl"];
+/// Schema file extension (`comline-core`'s `SCHEMA_EXTENSION`), stripped when
+/// turning a virtual file name into a namespace.
+const SCHEMA_EXT: &str = ".ids";
 
 fn uri() -> Url {
     Url::parse("file:///playground.ids").expect("static uri")
@@ -59,7 +60,7 @@ pub fn start() {
 
 #[derive(Deserialize)]
 struct FileInput {
-    /// Virtual file name, e.g. `chat.comline`. Its stem, split on `/`, is the
+    /// Virtual file name, e.g. `chat.ids`. Its stem, split on `/`, is the
     /// namespace `use` statements in other files resolve against.
     path: String,
     source: String,
@@ -264,13 +265,10 @@ fn interpret_project(
     (CompileProjectResult { files: reports }, schemas)
 }
 
-/// `chat.comline` → `["chat"]`, `foo/bar.ids` → `["foo", "bar"]`. Falls back to
-/// `["main"]` for an empty or extension-only name.
+/// `chat.ids` → `["chat"]`, `wire/frame.ids` → `["wire", "frame"]`. Falls back
+/// to `["main"]` for an empty or extension-only name.
 fn namespace_segments(path: &str) -> Vec<String> {
-    let stem = SCHEMA_EXTS
-        .iter()
-        .find_map(|ext| path.strip_suffix(ext))
-        .unwrap_or(path);
+    let stem = path.strip_suffix(SCHEMA_EXT).unwrap_or(path);
     let segments: Vec<String> = stem
         .split('/')
         .filter(|s| !s.is_empty())
