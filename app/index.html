@@ -4,11 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Comline Playground</title>
+    <link rel="icon" type="image/svg+xml" href="/src/assets/brand/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="256x256" href="/src/assets/brand/favicon.png" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <header>
-      <h1>Comline Playground</h1>
+      <div class="brand">
+        <img
+          class="brand-mark"
+          src="/src/assets/brand/mark-cream.svg"
+          alt=""
+          aria-hidden="true"
+        />
+        <h1>Comline Playground</h1>
+      </div>
       <div class="seg" id="app-mode" role="tablist" aria-label="workspace">
         <button data-app="edit" class="active">edit</button>
         <button data-app="simulate">simulate</button>
