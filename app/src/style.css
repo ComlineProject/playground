@@ -546,6 +546,16 @@ body.mode-simulate #gen-controls {
   stroke: var(--accent);
   stroke-dasharray: 4 3;
 }
+.sim-wire .wire-hit {
+  stroke: transparent;
+  stroke-width: 12;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.sim-wire .wire-selected {
+  stroke-width: 3.5;
+  filter: drop-shadow(0 0 3px currentColor);
+}
 .sim-node {
   position: absolute;
   width: 150px;
@@ -626,6 +636,47 @@ body.mode-simulate #gen-controls {
   align-items: center;
   gap: 0.5rem;
   margin: 0.35rem 0;
+}
+.conn-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.2rem 0;
+}
+.conn-dot {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.conn-dot.ok {
+  color: var(--ok);
+}
+.conn-dot.err {
+  color: var(--err);
+}
+.conn-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.1rem 0;
+}
+.conn-name:hover {
+  color: var(--accent);
+}
+.conn-x {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.conn-x:hover {
+  color: var(--err);
 }
 .insp-row select,
 .insp-row .hash-copy {
@@ -810,6 +861,17 @@ details.frame-row > summary {
   padding: 0.2rem 0.4rem;
   cursor: pointer;
   list-style: none;
+}
+details.frame-row.has-conn > summary {
+  grid-template-columns: 7rem 3ch minmax(6rem, 1fr) 5.5rem 5rem 5rem 4rem;
+}
+.frame-conn {
+  color: var(--accent);
+  opacity: 0.85;
+}
+.conn-filters {
+  border-left: 1px solid var(--border);
+  padding-left: 0.4rem;
 }
 details.frame-row > summary::-webkit-details-marker {
   display: none;
