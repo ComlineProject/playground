@@ -84,7 +84,8 @@ let lastProject: CompileProjectResult | null = null;
 const fileCollapsed = new Set<string>();
 let genFiles: GeneratedFile[] | null = null;
 let genActivePath: string | null = null;
-const genCollapsed = new Set<string>();
+const genCollapsed = new Set<string>(); // collapsed folders inside the gen tree
+let genPanelCollapsed = false; // the whole gen tree panel
 
 // ── worker plumbing ─────────────────────────────────────────────────────
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -445,7 +446,7 @@ function renderProblems() {
     const units = reports.reduce((n, f) => n + f.units, 0);
     problemsEl.innerHTML = `<p class="muted pad">no problems — ${units} unit${
       units === 1 ? "" : "s"
-    } across ${files.length} file${files.length === 1 ? "" : "s"}</p>`;
+    } across ${files.length} schema${files.length === 1 ? "" : "s"}</p>`;
     return;
   }
 
@@ -516,15 +517,26 @@ function paintOutput() {
 
   // A tree panel at the bottom, mirroring the schema file tree on the left.
   const panel = document.createElement("div");
-  panel.className = "tree-panel";
+  panel.className = "tree-panel" + (genPanelCollapsed ? " collapsed" : "");
   const head = document.createElement("div");
   head.className = "tree-head";
+  const toggleBtn = document.createElement("button");
+  toggleBtn.className = "tree-toggle";
+  toggleBtn.setAttribute("aria-expanded", String(!genPanelCollapsed));
+  const caret = document.createElement("span");
+  caret.className = "tree-caret";
+  caret.textContent = genPanelCollapsed ? "▸" : "▾";
   const title = document.createElement("span");
   title.textContent = "generated";
+  toggleBtn.append(caret, title);
+  toggleBtn.addEventListener("click", () => {
+    genPanelCollapsed = !genPanelCollapsed;
+    paintOutput();
+  });
   const path = document.createElement("span");
   path.className = "path";
   path.textContent = genActivePath ?? "";
-  head.append(title, path);
+  head.append(toggleBtn, path);
   const tree = document.createElement("div");
   tree.className = "gen-tree";
   renderTreeInto(tree, buildTree(genFiles.map((f) => ({ path: f.path, data: f }))), {
@@ -601,6 +613,20 @@ targetSel.addEventListener("change", () => {
 });
 
 treeAddEl.addEventListener("click", addFile);
+
+// Collapse / expand a static bottom panel (files, problems) by its toggle.
+function wireCollapse(toggleSel: string) {
+  const btn = $<HTMLButtonElement>(toggleSel);
+  const panel = btn.closest(".tree-panel") as HTMLElement;
+  const caret = btn.querySelector(".tree-caret") as HTMLElement;
+  btn.addEventListener("click", () => {
+    const collapsed = panel.classList.toggle("collapsed");
+    btn.setAttribute("aria-expanded", String(!collapsed));
+    caret.textContent = collapsed ? "▸" : "▾";
+  });
+}
+wireCollapse("#files-toggle");
+wireCollapse("#problems-toggle");
 
 // ── boot ───────────────────────────────────────────────────────────────
 for (const s of SAMPLE_FILES) {

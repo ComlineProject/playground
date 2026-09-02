@@ -31,14 +31,18 @@
         </div>
         <div class="tree-panel">
           <div class="tree-head">
-            <span>files</span>
+            <button class="tree-toggle" id="files-toggle" aria-expanded="true">
+              <span class="tree-caret">▾</span><span>schemas</span>
+            </button>
             <button class="icon-btn" id="tree-add" title="new schema file">+</button>
           </div>
           <div class="filetree" id="tree"></div>
         </div>
         <div class="tree-panel problems-panel">
           <div class="tree-head">
-            <span>problems</span>
+            <button class="tree-toggle" id="problems-toggle" aria-expanded="true">
+              <span class="tree-caret">▾</span><span>problems</span>
+            </button>
             <span class="path" id="problems-count"></span>
           </div>
           <div class="problems-body" id="problems"></div>
