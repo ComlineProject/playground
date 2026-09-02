@@ -1,7 +1,9 @@
-/// Turn a `Connection` into a running wire: a `GenericDispatch` server bound to
-/// the server instance's behaviours, a `GenericClient` on the other end, over a
-/// tapped `duplex()`. Each end handshakes with its own instance's `irHash`, so a
-/// version-skewed pair is refused for real. Behaviours swap without reconnecting.
+/// Turn each `Connection` into a running wire: a `GenericDispatch` server bound
+/// to the server instance's behaviours, a `GenericClient` on the other end, over
+/// a tapped `duplex()`. Each end handshakes with its own instance's `irHash`, so
+/// a version-skewed pair is refused for real. `Wires` keeps one live wire per
+/// connection and diffs against the session so adding or removing a connection
+/// leaves the others untouched.
 
 import { BEHAVIORS } from "./behavior.ts";
 import { GenericClient, GenericDispatch, type Behavior, type BehaviorMap } from "./generic.ts";
@@ -20,10 +22,13 @@ import { findProtocol } from "./shape.ts";
 import { wire, type Tap } from "./transport.ts";
 
 export interface LiveConnection {
+  connId: string;
   tap: Tap;
   /** `null` when connected; otherwise why the connection was refused
    *  (`"handshake"` for a version / framing / wire-format mismatch). */
   error: string | null;
+  clientId: string;
+  serverId: string;
   clientName: string;
   serverName: string;
   framing: "datagram" | "jsonrpc";
@@ -41,8 +46,8 @@ export interface LiveConnection {
 const framingFor = (name: "datagram" | "jsonrpc"): (() => Framing) =>
   name === "jsonrpc" ? () => new JsonRpcFraming() : () => new DatagramFraming();
 
-/** Bind a `Connection` to real transports and run its handshake. Never throws —
- *  a refused handshake comes back as `LiveConnection.error`. */
+/** Bind one `Connection` to real transports and run its handshake. Never throws
+ *  — a refused handshake comes back as `LiveConnection.error`. */
 export async function connect(session: Session, conn: Connection): Promise<LiveConnection> {
   const client = instance(session, conn.clientId);
   const server = instance(session, conn.serverId);
@@ -68,7 +73,10 @@ export async function connect(session: Session, conn: Connection): Promise<LiveC
 
   const w = wire(client.name, server.name, session.latencyMs);
   const base = {
+    connId: conn.id,
     tap: w.tap,
+    clientId: client.id,
+    serverId: server.id,
     clientName: client.name,
     serverName: server.name,
     framing: protocol.framing,
@@ -107,4 +115,53 @@ export async function connect(session: Session, conn: Connection): Promise<LiveC
       behaviors[fnName] = BEHAVIORS[setting.kind].make(setting.config, fn, schema);
     },
   };
+}
+
+/// One live wire per `Connection` in the session. `sync` opens the ones that
+/// appeared and closes the ones that vanished, leaving the rest running;
+/// `rebuild` drops everything and re-opens (for a schema edit / latency change /
+/// resync, where every handshake has to run again).
+export class Wires {
+  private live = new Map<string, LiveConnection>();
+
+  /** Incremental: match the live set to `session.connections`. */
+  async sync(session: Session): Promise<void> {
+    const want = new Map(session.connections.map((c) => [c.id, c]));
+    for (const [id, lc] of this.live) {
+      if (!want.has(id)) {
+        lc.close();
+        this.live.delete(id);
+      }
+    }
+    for (const conn of session.connections) {
+      if (this.live.has(conn.id)) continue;
+      this.live.set(conn.id, await connect(session, conn));
+    }
+  }
+
+  /** Close all and re-open from scratch. */
+  async rebuild(session: Session): Promise<void> {
+    this.closeAll();
+    await this.sync(session);
+  }
+
+  get(connId: string): LiveConnection | undefined {
+    return this.live.get(connId);
+  }
+
+  /** Live wires this instance is an end of. */
+  forInstance(instanceId: string): LiveConnection[] {
+    return [...this.live.values()].filter(
+      (lc) => lc.clientId === instanceId || lc.serverId === instanceId,
+    );
+  }
+
+  all(): LiveConnection[] {
+    return [...this.live.values()];
+  }
+
+  closeAll(): void {
+    for (const lc of this.live.values()) lc.close();
+    this.live.clear();
+  }
 }

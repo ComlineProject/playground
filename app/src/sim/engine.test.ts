@@ -9,7 +9,14 @@ import { test } from "node:test";
 
 import initWasm, { describe_project } from "../wasm/comline_playground_wasm.js";
 import type { ProjectShape } from "./shape.ts";
-import { addInstance, emptySession, rebuild, removeInstance, setBehavior, setConnection } from "./model.ts";
+import {
+  addConnection,
+  addInstance,
+  emptySession,
+  rebuild,
+  removeInstance,
+  setBehavior,
+} from "./model.ts";
 import { connect } from "./engine.ts";
 import { SimRemoteError } from "./generic.ts";
 
@@ -39,8 +46,8 @@ function wired() {
   const session = emptySession(shape());
   const server = addInstance(session, { schemaNs: "chat", protocol: "Chat", role: "server" });
   const client = addInstance(session, { schemaNs: "chat", protocol: "Chat", role: "client" });
-  setConnection(session, client.id, server.id);
-  return { session, server, client };
+  const conn = addConnection(session, client.id, server.id);
+  return { session, server, client, conn };
 }
 
 test("model — instance naming, seeded behaviours, removal drops the connection", () => {
@@ -54,15 +61,15 @@ test("model — instance naming, seeded behaviours, removal drops the connection
 
   const client = addInstance(session, { schemaNs: "chat", protocol: "Chat", role: "client" });
   assert.deepEqual(client.behaviors, {});
-  setConnection(session, client.id, a.id);
+  addConnection(session, client.id, a.id);
   removeInstance(session, a.id);
-  assert.equal(session.connection, null);
+  assert.deepEqual(session.connections, []);
 });
 
 test("Reply with value returns the configured value", async () => {
-  const { session, server } = wired();
+  const { session, server, conn } = wired();
   setBehavior(session, server.id, "send", "reply", { value: { body: "HI", seq: 1 } });
-  const live = await connect(session, session.connection!);
+  const live = await connect(session, conn);
 
   assert.deepEqual(await live.call("send", { text: "x" }), { body: "HI", seq: 1 });
   assert.equal(live.tap.frames.filter((f) => f.kind !== "handshake").length, 2);
@@ -70,8 +77,8 @@ test("Reply with value returns the configured value", async () => {
 });
 
 test("Echo returns the params; a live behaviour swap takes effect on the next call", async () => {
-  const { session } = wired();
-  const live = await connect(session, session.connection!);
+  const { session, conn } = wired();
+  const live = await connect(session, conn);
 
   live.setBehavior("send", { kind: "echo", config: {} });
   assert.deepEqual(await live.call("send", { text: "pong" }), { text: "pong" });
@@ -82,12 +89,12 @@ test("Echo returns the params; a live behaviour swap takes effect on the next ca
 });
 
 test("Increment field bumps once per call", async () => {
-  const { session, server } = wired();
+  const { session, server, conn } = wired();
   setBehavior(session, server.id, "send", "increment", {
     base: { body: "b", seq: 0 },
     path: "seq",
   });
-  const live = await connect(session, session.connection!);
+  const live = await connect(session, conn);
 
   assert.equal((await live.call("send", { text: "x" }) as { seq: number }).seq, 1);
   assert.equal((await live.call("send", { text: "x" }) as { seq: number }).seq, 2);
@@ -96,9 +103,9 @@ test("Increment field bumps once per call", async () => {
 });
 
 test("Raise error comes back as SimRemoteError mapped to the ordinal's name", async () => {
-  const { session, server } = wired();
+  const { session, server, conn } = wired();
   setBehavior(session, server.id, "send", "raise", { ordinal: 0, data: { reason: "denied" } });
-  const live = await connect(session, session.connection!);
+  const live = await connect(session, conn);
 
   await assert.rejects(
     () => live.call("send", { text: "x" }),
@@ -114,8 +121,8 @@ test("Raise error comes back as SimRemoteError mapped to the ordinal's name", as
 });
 
 test("Drop leaves the call pending", async () => {
-  const { session } = wired();
-  const live = await connect(session, session.connection!);
+  const { session, conn } = wired();
+  const live = await connect(session, conn);
   live.setBehavior("send", { kind: "drop", config: {} });
 
   const race = await Promise.race([
@@ -135,5 +142,5 @@ test("rebuild keeps a surviving instance's behaviour config", () => {
   const kept = session.instances.find((i) => i.id === server.id)!;
   assert.equal(kept.behaviors.send.kind, "raise");
   assert.deepEqual(kept.behaviors.send.config, { ordinal: 0, data: { reason: "keep me" } });
-  assert.ok(session.connection, "connection survives a same-shape rebuild");
+  assert.equal(session.connections.length, 1, "connection survives a same-shape rebuild");
 });

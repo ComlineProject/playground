@@ -1,26 +1,30 @@
 /// The full-width simulate view: a palette of protocol × role, a canvas the
-/// instances sit on, one connection between a client and a server, an inspector
-/// (instance facts, per-function behaviours, and — for a connected client — the
-/// call form), and the frame list. Everything 1c does, through the UI.
+/// instances sit on, the connections between them, an inspector (instance facts,
+/// per-function behaviours, per-connection controls, and — for a connected
+/// client — the call form), and the merged frame list. Phase 2 (2a): many
+/// connections.
 
 import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
-import { connect, type LiveConnection } from "../engine.ts";
+import { Wires } from "../engine.ts";
 import { SimRemoteError } from "../generic.ts";
 import {
+  addConnection,
   addInstance,
+  connectionsFor,
   emptySession,
   instance,
   rebuild,
+  removeConnection,
   removeInstance,
   resyncInstance,
   setBehavior,
-  setConnection,
+  type Connection,
   type Instance,
   type Role,
   type Session,
 } from "../model.ts";
 import { findProtocol, type ProjectShape } from "../shape.ts";
-import type { DecodeCtx } from "../framedecode.ts";
+import type { LogSource } from "./framelog.ts";
 import { argsForm, type ArgsForm } from "./argsform.ts";
 import { frameLog } from "./framelog.ts";
 
@@ -35,8 +39,9 @@ export interface SimView {
 
 export function createSim(): SimView {
   let session: Session | null = null;
-  let live: LiveConnection | null = null;
-  let selectedId: string | null = null;
+  const wires = new Wires();
+  let selectedId: string | null = null; // selected instance
+  let selectedConnId: string | null = null; // selected connection (edge)
   let callForm: ArgsForm | null = null;
 
   const el = div("sim");
@@ -55,7 +60,7 @@ export function createSim(): SimView {
     flog.el,
   );
 
-  const onResize = () => drawWire();
+  const onResize = () => drawWires();
   window.addEventListener("resize", onResize);
 
   // ── palette ──────────────────────────────────────────────────────────
@@ -123,6 +128,7 @@ export function createSim(): SimView {
       y: Math.max(8, (p?.y ?? 48 + n * 26) - NODE_H / 2),
     });
     selectedId = inst.id;
+    selectedConnId = null;
     renderAll();
   });
 
@@ -131,12 +137,19 @@ export function createSim(): SimView {
   }
 
   function connected(id: string): boolean {
-    const c = session?.connection;
-    return !!c && (c.clientId === id || c.serverId === id);
+    return !!session && connectionsFor(session, id).length > 0;
   }
 
   function select(id: string) {
     selectedId = id;
+    selectedConnId = null;
+    renderCanvas();
+    renderInspector();
+  }
+
+  function selectConn(connId: string) {
+    selectedConnId = connId;
+    selectedId = null;
     renderCanvas();
     renderInspector();
   }
@@ -146,7 +159,7 @@ export function createSim(): SimView {
     if (!session) return;
     for (const inst of session.instances) canvasEl.append(nodeCard(inst));
     dropHint.hidden = session.instances.length > 0;
-    drawWire();
+    drawWires();
   }
 
   function nodeCard(inst: Instance): HTMLElement {
@@ -198,7 +211,7 @@ export function createSim(): SimView {
       inst.y = Math.max(0, Math.round(p.y - oy));
       n.style.left = `${inst.x}px`;
       n.style.top = `${inst.y}px`;
-      drawWire();
+      drawWires();
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -247,83 +260,111 @@ export function createSim(): SimView {
       return;
     }
     const [clientId, serverId] = a.role === "client" ? [a.id, b.id] : [b.id, a.id];
+    let conn: Connection;
     try {
-      setConnection(session, clientId, serverId);
+      conn = addConnection(session, clientId, serverId);
     } catch (err) {
       flashInspectorError((err as Error).message);
       return;
     }
     selectedId = clientId; // land on the client — its call form is the next step
-    void reconnect();
+    selectedConnId = null;
+    void syncWires().then(() => void conn);
   }
 
-  function drawWire() {
-    for (const l of [...wireSvg.querySelectorAll("line:not(.wire-drag)")]) l.remove();
-    if (!session?.connection) return;
-    const c = nodeEl(session.connection.clientId);
-    const s = nodeEl(session.connection.serverId);
-    if (!c || !s) return;
-    const a = center(c);
-    const b = center(s);
-    const line = document.createElementNS(SVGNS, "line");
-    line.setAttribute("x1", String(a.x));
-    line.setAttribute("y1", String(a.y));
-    line.setAttribute("x2", String(b.x));
-    line.setAttribute("y2", String(b.y));
-    line.setAttribute("class", live?.error ? "wire-refused" : live ? "wire-live" : "wire-pending");
-    wireSvg.append(line);
+  function drawWires() {
+    for (const l of [...wireSvg.querySelectorAll("line")]) {
+      if (!l.classList.contains("wire-drag")) l.remove();
+    }
+    if (!session) return;
+    for (const conn of session.connections) {
+      const c = nodeEl(conn.clientId);
+      const s = nodeEl(conn.serverId);
+      if (!c || !s) continue;
+      const a = center(c);
+      const b = center(s);
+      const live = wires.get(conn.id);
+      const cls = live?.error ? "wire-refused" : live ? "wire-live" : "wire-pending";
+
+      const hit = document.createElementNS(SVGNS, "line");
+      hit.setAttribute("class", "wire-hit");
+      const vis = document.createElementNS(SVGNS, "line");
+      vis.setAttribute("class", cls + (conn.id === selectedConnId ? " wire-selected" : ""));
+      for (const ln of [hit, vis]) {
+        ln.setAttribute("x1", String(a.x));
+        ln.setAttribute("y1", String(a.y));
+        ln.setAttribute("x2", String(b.x));
+        ln.setAttribute("y2", String(b.y));
+        ln.addEventListener("click", () => selectConn(conn.id));
+      }
+      wireSvg.append(hit, vis);
+    }
   }
 
   function center(node: HTMLElement) {
     return { x: node.offsetLeft + node.offsetWidth / 2, y: node.offsetTop + node.offsetHeight / 2 };
   }
 
-  // ── connect / disconnect ─────────────────────────────────────────────
-  async function reconnect() {
-    live?.close();
-    live = null;
-    if (session?.connection) {
-      try {
-        live = await connect(session, session.connection);
-      } catch (e) {
-        flashInspectorError((e as Error).message);
-      }
-    }
-    let ctx: DecodeCtx | undefined;
-    if (live && session) {
-      const found = findProtocol(
-        session.shape,
-        instance(session, session.connection!.serverId)!.schemaNs,
-        instance(session, session.connection!.serverId)!.protocol,
-      );
-      if (found) {
-        ctx = {
-          clientName: live.clientName,
-          serverName: live.serverName,
-          framing: live.framing,
-          fnNames: found.protocol.functions.map((f) => f.name),
-        };
-      }
-    }
-    flog.attach(live?.tap ?? null, ctx, live?.error ?? null);
+  // ── wires ────────────────────────────────────────────────────────────
+  function logSources(): LogSource[] {
+    if (!session) return [];
+    return wires.all().map((lc) => {
+      const server = instance(session!, lc.serverId);
+      const found = server && findProtocol(session!.shape, server.schemaNs, server.protocol);
+      return {
+        connId: lc.connId,
+        label: `${lc.clientName}→${lc.serverName}`,
+        tap: lc.tap,
+        error: lc.error,
+        ctx: found
+          ? {
+              clientName: lc.clientName,
+              serverName: lc.serverName,
+              framing: lc.framing,
+              fnNames: found.protocol.functions.map((f) => f.name),
+            }
+          : undefined,
+      };
+    });
+  }
+
+  /** Add / drop wires to match the session, leaving the rest running. */
+  async function syncWires() {
+    if (session) await wires.sync(session);
+    flog.setSources(logSources());
     renderCanvas();
     renderInspector();
   }
 
-  function partnersFor(inst: Instance): Instance[] {
-    if (!session) return [];
-    const want: Role = inst.role === "client" ? "server" : "client";
-    return session.instances.filter(
-      (i) => i.role === want && i.protocol === inst.protocol && i.schemaNs === inst.schemaNs,
-    );
+  /** Close every wire and re-open — for a schema edit / resync / latency change. */
+  async function rebuildWires() {
+    if (session) await wires.rebuild(session);
+    flog.setSources(logSources());
+    renderCanvas();
+    renderInspector();
   }
 
-  function connectedPartnerId(inst: Instance): string | null {
-    const conn = session?.connection;
-    if (!conn) return null;
-    if (conn.clientId === inst.id) return conn.serverId;
-    if (conn.serverId === inst.id) return conn.clientId;
-    return null;
+  function disconnect(connId: string) {
+    if (!session) return;
+    removeConnection(session, connId);
+    if (selectedConnId === connId) selectedConnId = null;
+    void syncWires();
+  }
+
+  /** Server / client instances of `inst`'s protocol not already wired to it. */
+  function openPartnersFor(inst: Instance): Instance[] {
+    if (!session) return [];
+    const want: Role = inst.role === "client" ? "server" : "client";
+    const already = new Set(
+      connectionsFor(session, inst.id).map((c) => (c.clientId === inst.id ? c.serverId : c.clientId)),
+    );
+    return session.instances.filter(
+      (i) =>
+        i.role === want &&
+        i.protocol === inst.protocol &&
+        i.schemaNs === inst.schemaNs &&
+        !already.has(i.id),
+    );
   }
 
   // ── inspector ────────────────────────────────────────────────────────
@@ -331,9 +372,15 @@ export function createSim(): SimView {
     inspectorEl.replaceChildren();
     callForm = null;
     if (!session) return;
+
+    if (selectedConnId) {
+      renderConnInspector(selectedConnId);
+      return;
+    }
+
     const sel = selectedId ? instance(session, selectedId) : undefined;
     if (!sel) {
-      inspectorEl.append(muted("select an instance"));
+      inspectorEl.append(muted("select an instance, or a connection"));
       return;
     }
     const found = findProtocol(session.shape, sel.schemaNs, sel.protocol);
@@ -357,63 +404,74 @@ export function createSim(): SimView {
     hash.addEventListener("click", () => void navigator.clipboard?.writeText(sel.irHash));
     inspectorEl.append(row("ir_hash", hash));
     if (sel.irHash !== found.schema.ir_hash) {
-      const resync = button("resync — schema changed", "danger", () => {
-        resyncInstance(session!, sel.id);
-        void reconnect();
-        renderAll();
-      });
-      inspectorEl.append(resync);
+      inspectorEl.append(
+        button("resync — schema changed", "danger", () => {
+          resyncInstance(session!, sel.id);
+          void rebuildWires();
+        }),
+      );
     }
 
-    // remove
-    const rm = button("remove instance", "danger", () => {
-      removeInstance(session!, sel.id);
-      if (selectedId === sel.id) selectedId = null;
-      void reconnect();
-      renderAll();
-    });
-    inspectorEl.append(rm);
+    inspectorEl.append(
+      button("remove instance", "danger", () => {
+        removeInstance(session!, sel.id);
+        if (selectedId === sel.id) selectedId = null;
+        void syncWires();
+      }),
+    );
 
-    // connect control
-    const partnerId = connectedPartnerId(sel);
-    const connectSel = document.createElement("select");
-    connectSel.className = "connect-sel";
-    connectSel.append(opt("", "— not connected —", !partnerId));
-    for (const p of partnersFor(sel)) connectSel.append(opt(p.id, p.name, p.id === partnerId));
-    connectSel.addEventListener("change", () => {
-      const otherId = selValue(connectSel);
-      if (!otherId) {
-        session!.connection = null;
-      } else {
-        const [clientId, serverId] =
-          sel.role === "client" ? [sel.id, otherId] : [otherId, sel.id];
-        try {
-          setConnection(session!, clientId, serverId);
-        } catch (e) {
-          flashInspectorError((e as Error).message);
-          return;
-        }
-      }
-      void reconnect();
-    });
-    inspectorEl.append(section("connection"), row("partner", connectSel));
+    // ── connections ──
+    inspectorEl.append(section("connections"));
+    const conns = connectionsFor(session, sel.id);
+    if (conns.length === 0) inspectorEl.append(muted("none"));
+    for (const conn of conns) {
+      const otherId = conn.clientId === sel.id ? conn.serverId : conn.clientId;
+      const other = instance(session, otherId);
+      const lc = wires.get(conn.id);
+      const r = div("conn-row");
+      const dot = document.createElement("span");
+      dot.className = `conn-dot ${lc?.error ? "err" : lc ? "ok" : ""}`;
+      dot.textContent = "●";
+      const name = document.createElement("button");
+      name.className = "conn-name";
+      name.textContent = `${conn.clientId === sel.id ? "→" : "←"} ${other?.name ?? otherId}`;
+      name.title = lc?.error ? `refused · ${lc.error}` : "inspect connection";
+      name.addEventListener("click", () => selectConn(conn.id));
+      const x = document.createElement("button");
+      x.className = "conn-x";
+      x.textContent = "✕";
+      x.title = "disconnect";
+      x.addEventListener("click", () => disconnect(conn.id));
+      r.append(dot, name, x);
+      inspectorEl.append(r);
+      if (lc?.error) inspectorEl.append(muted(`connection refused · ${lc.error}`, "err"));
+    }
+    const open = openPartnersFor(sel);
+    if (open.length) {
+      const addSel = document.createElement("select");
+      addSel.className = "connect-sel";
+      addSel.append(opt("", "+ connect to…", true));
+      for (const p of open) addSel.append(opt(p.id, p.name));
+      addSel.addEventListener("change", () => {
+        const otherId = selValue(addSel);
+        if (!otherId) return;
+        const other = instance(session!, otherId)!;
+        tryConnect(sel, other);
+      });
+      inspectorEl.append(row("add", addSel));
+    }
 
     const latency = document.createElement("input");
     latency.type = "number";
     latency.min = "0";
     latency.step = "10";
     latency.value = String(session.latencyMs);
+    latency.title = "applies to every connection";
     latency.addEventListener("change", () => {
       session!.latencyMs = Math.max(0, Number(latency.value) || 0);
-      void reconnect();
+      void rebuildWires();
     });
     inspectorEl.append(row("latency ms", latency));
-
-    if (session.connection && live?.error) {
-      inspectorEl.append(muted(`connection refused · ${live.error}`, "err"));
-    } else if (session.connection && live) {
-      inspectorEl.append(muted("● live", "ok"));
-    }
 
     // server: per-function behaviours
     if (sel.role === "server") {
@@ -423,10 +481,36 @@ export function createSim(): SimView {
       }
     }
 
-    // client + live: the call form
-    if (sel.role === "client" && live && !live.error && connectedPartnerId(sel)) {
+    // client with at least one live connection: the call form
+    if (sel.role === "client" && wires.forInstance(sel.id).some((lc) => !lc.error)) {
       inspectorEl.append(renderCallForm(sel));
     }
+  }
+
+  function renderConnInspector(connId: string) {
+    const conn = session!.connections.find((c) => c.id === connId);
+    if (!conn) {
+      selectedConnId = null;
+      inspectorEl.append(muted("connection is gone"));
+      return;
+    }
+    const client = instance(session!, conn.clientId);
+    const server = instance(session!, conn.serverId);
+    const lc = wires.get(conn.id);
+    inspectorEl.append(
+      facts([
+        ["client", client?.name ?? conn.clientId],
+        ["server", server?.name ?? conn.serverId],
+        ["framing", lc?.framing ?? "?"],
+        ["status", lc?.error ? `refused · ${lc.error}` : lc ? "live" : "…"],
+      ]),
+    );
+    if (lc?.error) inspectorEl.append(muted(`connection refused · ${lc.error}`, "err"));
+    else if (lc) inspectorEl.append(muted("● live", "ok"));
+    inspectorEl.append(
+      button("disconnect", "danger", () => disconnect(conn.id)),
+      button("select client", "", () => select(conn.clientId)),
+    );
   }
 
   function behaviorRow(inst: Instance, fnName: string): HTMLElement {
@@ -456,7 +540,9 @@ export function createSim(): SimView {
     wrap.append(cfg);
 
     const applyLive = () => {
-      if (live && !live.error && connectedPartnerId(inst)) live.setBehavior(fnName, inst.behaviors[fnName]);
+      for (const lc of wires.forInstance(inst.id)) {
+        if (!lc.error) lc.setBehavior(fnName, inst.behaviors[fnName]);
+      }
     };
     sel.addEventListener("change", () => {
       setBehavior(session!, inst.id, fnName, selValue(sel) as BehaviorKind);
@@ -481,6 +567,18 @@ export function createSim(): SimView {
     const wrap = div("call-form");
     wrap.append(section("call"));
 
+    // pick which connection to call over, when the client has more than one
+    const liveConns = wires.forInstance(inst.id).filter((lc) => !lc.error);
+    let connSel: HTMLSelectElement | null = null;
+    if (liveConns.length > 1) {
+      connSel = document.createElement("select");
+      connSel.className = "call-conn";
+      liveConns.forEach((lc, i) => connSel!.append(opt(lc.connId, `→ ${lc.serverName}`, i === 0)));
+      wrap.append(row("via", connSel));
+    }
+    const pickLive = () =>
+      connSel ? wires.get(selValue(connSel)) ?? liveConns[0] : liveConns[0];
+
     const fnSel = document.createElement("select");
     fnSel.className = "call-fn";
     found.protocol.functions.forEach((fn, i) => fnSel.append(opt(fn.name, fn.name, i === 0)));
@@ -493,7 +591,8 @@ export function createSim(): SimView {
     wrap.append(out);
 
     const send = button("send", "primary", async () => {
-      if (!callForm || !live) return;
+      const lc = pickLive();
+      if (!callForm || !lc) return;
       out.className = "call-out mono";
       let params: unknown;
       try {
@@ -505,7 +604,7 @@ export function createSim(): SimView {
       }
       out.textContent = "…";
       try {
-        const res = await live.call(selValue(fnSel), params);
+        const res = await lc.call(selValue(fnSel), params);
         out.textContent = res === undefined ? "(no reply)" : JSON.stringify(res, null, 2);
         out.classList.add("ok");
       } catch (e) {
@@ -550,12 +649,15 @@ export function createSim(): SimView {
       if (!session) session = emptySession(shape);
       else rebuild(session, shape);
       if (selectedId && !instance(session, selectedId)) selectedId = null;
-      void reconnect(); // pick up any framing / ir_hash change, or drop a dead connection
-      renderAll();
+      if (selectedConnId && !session.connections.some((c) => c.id === selectedConnId)) {
+        selectedConnId = null;
+      }
+      renderPalette();
+      void rebuildWires(); // re-handshake every wire against the new shape
     },
     destroy() {
       window.removeEventListener("resize", onResize);
-      live?.close();
+      wires.closeAll();
     },
   };
 }

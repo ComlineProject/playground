@@ -1,7 +1,8 @@
 /// The simulate view, driven through the DOM (linkedom): drop instances on the
 /// canvas, connect them (inspector dropdown or a port-to-node drag), send a
-/// call, watch the frames — plus the 1e refusal path and the canvas polish
-/// (free placement, drag-to-connect, frame-kind filter).
+/// call, watch the frames — plus the 1e refusal path, the canvas polish (free
+/// placement, drag-to-connect, frame filters), and 2a fan-out (many
+/// connections, one merged log).
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -362,4 +363,65 @@ test("polish — a long wall-clock gap inserts a filterable idle separator", asy
   } finally {
     performance.now = realNow;
   }
+});
+
+test("2a — fan-out: one server, two clients, two connections; drop one, the other stays live", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+
+  const all = [...sim.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  const serverId = all.find((n) => n.classList.contains("role-server"))!.dataset.id!;
+  const clientIds = all.filter((n) => n.classList.contains("role-client")).map((n) => n.dataset.id!);
+  const node = (id: string) => sim.el.querySelector(`.sim-node[data-id="${id}"]`) as HTMLElement;
+  const sendBtn = () =>
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find(
+      (b) => b.textContent === "send",
+    ) as HTMLButtonElement;
+
+  // server replies with a constant
+  fire(node(serverId), "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+
+  // wire both clients to the one server
+  for (const cid of clientIds) {
+    fire(node(cid), "click");
+    pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, serverId);
+    await tick();
+  }
+  assert.equal(sim.el.querySelectorAll(".sim-wire .wire-live").length, 2, "two live wires");
+  assert.equal(sim.el.querySelectorAll(".conn-filters .frame-filter").length, 2, "a filter per connection");
+
+  // each client calls send and gets the reply
+  for (const cid of clientIds) {
+    fire(node(cid), "click");
+    pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+    fire(sendBtn(), "click");
+    await tick();
+    assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "HI"/);
+  }
+  const conns = new Set(
+    [...sim.el.querySelectorAll(".sim-frames-list .frame-row")].map((r) => (r as HTMLElement).dataset.conn),
+  );
+  assert.equal(conns.size, 2, "the log carries frames from both connections");
+
+  // drop the first client's connection — the second stays live and callable
+  fire(node(clientIds[0]), "click");
+  fire(sim.el.querySelector(".conn-x") as HTMLElement, "click");
+  await tick();
+  assert.equal(sim.el.querySelectorAll(".sim-wire .wire-live").length, 1, "one wire left");
+
+  fire(node(clientIds[1]), "click");
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(sendBtn(), "click");
+  await tick();
+  assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "HI"/, "client 2 still works");
+
+  sim.destroy();
 });

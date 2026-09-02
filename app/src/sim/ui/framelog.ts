@@ -1,20 +1,32 @@
-/// The frame inspector under the canvas. A row per frame — direction, kind,
-/// function, round-trip time (on the reply, measured from its own request by
-/// id — not wall-clock gap between frames, which is mostly idle time), byte
-/// length — expanding to the decoded envelope, the raw hex, and the framing
-/// name. A wall-clock gap over `IDLE_MS` inserts an `idle` separator row.
-/// Every row kind — handshake / request / response / idle — is filterable from
-/// the header. A refused connection gets its own row.
+/// The frame inspector under the canvas. It merges the taps of every live
+/// connection into one time-ordered list — a row per frame: connection (when
+/// there is more than one), direction, kind, function, round-trip time (on the
+/// reply, measured from its own request by id — not wall-clock gap, which is
+/// mostly idle time), byte length — expanding to the decoded envelope, the raw
+/// hex, and the framing name. A wall-clock gap over `IDLE_MS` inserts an `idle`
+/// separator. Every row kind — handshake / request / response / idle — and
+/// every connection is filterable from the header. A refused connection gets
+/// its own row.
 
 import { describeFrame, toHex, type DecodeCtx } from "../framedecode.ts";
 import type { Frame, Tap } from "../transport.ts";
 
+export interface LogSource {
+  connId: string;
+  /** Short label for the connection column / filter, e.g. `chat-2→chat-1`. */
+  label: string;
+  tap: Tap;
+  ctx?: DecodeCtx;
+  error?: string | null;
+}
+
 export interface FrameLog {
   el: HTMLElement;
-  /** Point at a new connection's tap. `ctx` decodes the frames; `error` (e.g.
-   *  `"handshake"`) appends a refusal row. Clears the list. */
-  attach(tap: Tap | null, ctx?: DecodeCtx, error?: string | null): void;
+  /** Replace the set of connections being logged. Clears and re-renders. */
+  setSources(sources: LogSource[]): void;
 }
+
+const IDLE_MS = 2000;
 
 export function frameLog(): FrameLog {
   const el = document.createElement("div");
@@ -25,10 +37,11 @@ export function frameLog(): FrameLog {
   const title = document.createElement("span");
   title.textContent = "frames";
 
-  // kind filter — a toggle per row kind; hidden kinds persist across attaches.
-  const hidden = new Set<string>();
-  const filters = document.createElement("div");
-  filters.className = "frame-filters";
+  const hidden = new Set<string>(); // hidden row kinds
+  const hiddenConns = new Set<string>(); // hidden connection ids
+
+  const kindFilters = document.createElement("div");
+  kindFilters.className = "frame-filters";
   for (const k of ["handshake", "request", "response", "idle"]) {
     const b = document.createElement("button");
     b.className = "frame-filter on";
@@ -39,45 +52,57 @@ export function frameLog(): FrameLog {
       else (hidden.add(k), b.classList.remove("on"));
       applyFilter();
     });
-    filters.append(b);
+    kindFilters.append(b);
   }
+
+  const connFilters = document.createElement("div");
+  connFilters.className = "frame-filters conn-filters";
+
   const clear = document.createElement("button");
   clear.className = "icon-btn";
   clear.textContent = "clear";
-  head.append(title, filters, clear);
+  head.append(title, kindFilters, connFilters, clear);
 
   const list = document.createElement("div");
   list.className = "sim-frames-list";
-
   el.append(head, list);
 
-  let unsub: (() => void) | null = null;
-  let ctx: DecodeCtx | null = null;
-  // request id → when its request frame was sent, so a reply shows round-trip.
-  const sentAt = new Map<string, number>();
-  // arrival time of the last frame, for the idle separator.
+  let sources: LogSource[] = [];
+  const unsubs: (() => void)[] = [];
+  const ctxByConn = new Map<string, DecodeCtx | undefined>();
+  const labelByConn = new Map<string, string>();
+  const sentAt = new Map<string, number>(); // `${connId}:${requestId}` → sent-at
   let lastAt: number | null = null;
-
-  const IDLE_MS = 2000;
+  let multi = false;
 
   function applyFilter() {
     for (const r of list.querySelectorAll<HTMLElement>(".frame-row, .frame-idle")) {
-      r.hidden = hidden.has(r.dataset.kind ?? "");
+      const byKind = hidden.has(r.dataset.kind ?? "");
+      const byConn = r.dataset.conn ? hiddenConns.has(r.dataset.conn) : false;
+      r.hidden = byKind || byConn;
     }
   }
 
-  const empty = () => {
-    const p = document.createElement("p");
-    p.className = "muted pad";
-    p.textContent = "no connection";
-    return p;
-  };
+  function renderConnFilters() {
+    connFilters.replaceChildren();
+    if (!multi) return;
+    for (const s of sources) {
+      const b = document.createElement("button");
+      b.className = "frame-filter on";
+      b.textContent = s.label;
+      b.addEventListener("click", () => {
+        if (hiddenConns.delete(s.connId)) b.classList.add("on");
+        else (hiddenConns.add(s.connId), b.classList.remove("on"));
+        applyFilter();
+      });
+      connFilters.append(b);
+    }
+  }
 
-  function addRow(f: Frame) {
+  function addRow(connId: string, f: Frame) {
+    const ctx = ctxByConn.get(connId);
     const detail = ctx ? describeFrame(f, ctx) : { kind: f.kind, framing: "?" };
 
-    // Idle separator — a real wall-clock gap between frames (mostly "you were
-    // reading the last reply"), its own filterable kind.
     if (lastAt !== null && f.at - lastAt > IDLE_MS) {
       const sep = document.createElement("div");
       sep.className = "frame-idle";
@@ -88,33 +113,35 @@ export function frameLog(): FrameLog {
     }
     lastAt = f.at;
 
-    // Round-trip: recorded on the request, read (and shown) on the reply.
     let rttText = "";
     if (detail.requestId) {
-      if (detail.kind === "request") {
-        sentAt.set(detail.requestId, f.at);
-      } else if (detail.kind === "response" && sentAt.has(detail.requestId)) {
-        rttText = `${Math.round(f.at - sentAt.get(detail.requestId)!)} ms`;
-        sentAt.delete(detail.requestId);
+      const key = `${connId}:${detail.requestId}`;
+      if (detail.kind === "request") sentAt.set(key, f.at);
+      else if (detail.kind === "response" && sentAt.has(key)) {
+        rttText = `${Math.round(f.at - sentAt.get(key)!)} ms`;
+        sentAt.delete(key);
       }
     }
 
     const row = document.createElement("details");
-    row.className = `frame-row frame-${detail.kind}`;
+    row.className = `frame-row frame-${detail.kind}${multi ? " has-conn" : ""}`;
     row.dataset.kind = detail.kind;
-    row.hidden = hidden.has(detail.kind);
+    row.dataset.conn = connId;
+    row.hidden = hidden.has(detail.kind) || hiddenConns.has(connId);
 
     const summary = document.createElement("summary");
     const rtt = cell("frame-delta", rttText);
     if (rttText) rtt.title = "round-trip time";
-    summary.append(
+    const cells = [
       cell("frame-seq", String(f.seq).padStart(3, "0")),
       cell("frame-dir", `${f.from} → ${f.to}`),
       cell("frame-kind", detail.kind),
       cell("frame-fn", detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : "")),
       rtt,
       cell("frame-len", `${f.bytes.length} B`),
-    );
+    ];
+    if (multi) cells.unshift(cell("frame-conn", labelByConn.get(connId) ?? connId));
+    summary.append(...cells);
     row.append(summary);
 
     const body = document.createElement("div");
@@ -150,35 +177,57 @@ export function frameLog(): FrameLog {
     list.scrollTop = list.scrollHeight;
   }
 
-  function refusedRow(reason: string) {
+  function refusedRow(connId: string, reason: string) {
     const r = document.createElement("div");
     r.className = "frame-row frame-refused";
-    r.textContent = `connection refused · ${reason}`;
+    r.dataset.conn = connId;
+    r.textContent = `${multi ? (labelByConn.get(connId) ?? connId) + " · " : ""}connection refused · ${reason}`;
     list.append(r);
   }
 
-  clear.addEventListener("click", () => {
-    list.replaceChildren();
+  function teardown() {
+    for (const u of unsubs.splice(0)) u();
     sentAt.clear();
     lastAt = null;
+    list.replaceChildren();
+  }
+
+  clear.addEventListener("click", () => {
+    sentAt.clear();
+    lastAt = null;
+    list.replaceChildren();
   });
 
   return {
     el,
-    attach(tap, decodeCtx, error) {
-      unsub?.();
-      unsub = null;
-      ctx = decodeCtx ?? null;
-      sentAt.clear();
-      lastAt = null;
-      list.replaceChildren();
-      if (!tap) {
-        list.append(empty());
+    setSources(next) {
+      teardown();
+      sources = next;
+      multi = next.length > 1;
+      ctxByConn.clear();
+      labelByConn.clear();
+      for (const s of next) {
+        ctxByConn.set(s.connId, s.ctx);
+        labelByConn.set(s.connId, s.label);
+      }
+      renderConnFilters();
+
+      if (next.length === 0) {
+        const p = document.createElement("p");
+        p.className = "muted pad";
+        p.textContent = "no connection";
+        list.append(p);
         return;
       }
-      for (const f of tap.frames) addRow(f);
-      if (error) refusedRow(error);
-      unsub = tap.on(addRow);
+
+      // backfill: every source's existing frames, merge-sorted by arrival
+      const backlog = next
+        .flatMap((s) => s.tap.frames.map((f) => ({ connId: s.connId, f })))
+        .sort((a, b) => a.f.at - b.f.at);
+      for (const { connId, f } of backlog) addRow(connId, f);
+      for (const s of next) if (s.error) refusedRow(s.connId, s.error);
+
+      for (const s of next) unsubs.push(s.tap.on((f) => addRow(s.connId, f)));
     },
   };
 }
