@@ -414,3 +414,346 @@ main {
   font-size: 0.75rem;
   margin-bottom: 0.35rem;
 }
+
+/* ── simulate view ─────────────────────────────────────────────────────── */
+#sim {
+  display: none;
+  flex: 1;
+  min-height: 0;
+}
+body.mode-simulate main {
+  display: none;
+}
+body.mode-simulate #sim {
+  display: block;
+}
+body.mode-simulate #gen-controls {
+  display: none;
+}
+
+.sim {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 190px 1fr 320px;
+  grid-template-rows: 1fr 230px;
+  grid-template-areas:
+    "palette canvas    inspector"
+    "frames  frames     inspector";
+}
+.sim-col {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.sim-palette {
+  grid-area: palette;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 0.4rem;
+}
+.sim-canvas {
+  grid-area: canvas;
+  position: relative;
+  display: flex;
+  gap: 1rem;
+  padding: 1.2rem;
+  overflow: auto;
+}
+.sim-inspector {
+  grid-area: inspector;
+  border-left: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 0.6rem 0.7rem;
+  font-size: 0.78rem;
+}
+.sim-frames {
+  grid-area: frames;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* palette */
+.palette-group {
+  margin-bottom: 0.8rem;
+}
+.palette-proto {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+.palette-chip {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  cursor: grab;
+  user-select: none;
+}
+.palette-chip.role-server {
+  border-left: 3px solid var(--accent);
+}
+.palette-chip.role-client {
+  border-left: 3px solid var(--ok);
+}
+
+/* canvas */
+.sim-wire {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.sim-wire line {
+  stroke-width: 2;
+}
+.sim-wire .wire-live {
+  stroke: var(--ok);
+}
+.sim-wire .wire-pending {
+  stroke: var(--muted);
+  stroke-dasharray: 5 4;
+}
+.sim-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  flex: 0 0 200px;
+  z-index: 1;
+}
+.lane-server {
+  margin-left: auto;
+}
+.lane-cap {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.sim-node {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  min-width: 160px;
+}
+.sim-node.role-server {
+  border-top: 3px solid var(--accent);
+}
+.sim-node.role-client {
+  border-top: 3px solid var(--ok);
+}
+.sim-node.selected {
+  outline: 2px solid var(--accent);
+}
+.sim-node.wired {
+  box-shadow: 0 0 0 1px var(--ok) inset;
+}
+.node-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.node-sub {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* inspector */
+.insp-section {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin: 0.9rem 0 0.4rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.insp-facts {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+.fact {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.insp-label {
+  color: var(--muted);
+}
+.fact-v {
+  color: var(--fg);
+}
+.insp-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+}
+.insp-row select,
+.insp-row .hash-copy {
+  flex: 1;
+  min-width: 0;
+}
+.hash-copy {
+  font-size: 0.72rem;
+  text-align: left;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sim-inspector select,
+.sim-inspector textarea {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+}
+.sim-inspector textarea {
+  width: 100%;
+  resize: vertical;
+}
+.sim-btn {
+  font: inherit;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.25rem 0.6rem;
+  margin-top: 0.4rem;
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--fg);
+}
+.sim-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sim-btn.danger {
+  border-color: var(--err);
+  color: var(--err);
+}
+.behavior-row {
+  margin: 0.4rem 0;
+}
+.behavior-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.behavior-fn {
+  flex: 0 0 4.5rem;
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+.behavior-kind {
+  flex: 1;
+}
+.behavior-config {
+  margin-top: 0.25rem;
+  font-size: 0.72rem !important;
+}
+.behavior-config.bad {
+  border-color: var(--err);
+}
+.call-args {
+  margin: 0.4rem 0;
+}
+.call-out {
+  white-space: pre-wrap;
+  font-size: 0.72rem;
+  margin-top: 0.4rem;
+  max-height: 8rem;
+  overflow: auto;
+}
+
+/* args form */
+.arg-row {
+  margin: 0.3rem 0;
+}
+.arg-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 0.15rem;
+}
+.arg-type {
+  color: var(--accent);
+}
+.arg-input {
+  width: 100%;
+}
+.arg-struct {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.3rem 0.5rem;
+  margin: 0;
+}
+.args-raw-toggle {
+  font-size: 0.7rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.3rem;
+}
+.args-json {
+  width: 100%;
+}
+
+/* frame list */
+.sim-frames-head {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+.sim-frames-list {
+  flex: 1;
+  overflow: auto;
+  padding: 0 0.4rem 0.4rem;
+  font-size: 0.72rem;
+}
+.frame-row {
+  display: grid;
+  grid-template-columns: 3ch 1fr 6rem 4rem;
+  gap: 0.6rem;
+  padding: 0.18rem 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+.frame-row .frame-seq {
+  color: var(--muted);
+}
+.frame-row .frame-kind {
+  color: var(--accent);
+}
+.frame-row .frame-len {
+  color: var(--muted);
+  text-align: right;
+}
+.frame-handshake .frame-kind {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+}

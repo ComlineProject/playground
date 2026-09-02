@@ -20,6 +20,7 @@ import type {
   LspPosition,
   SemanticTokens,
 } from "./worker.ts";
+import { createSim, type ProjectShape, type SimView } from "./sim/index.ts";
 
 // ── sample: two files, one `use`ing the other ────────────────────────────
 const SAMPLE_FILES: { name: string; doc: string }[] = [
@@ -719,6 +720,32 @@ targetSel.addEventListener("change", () => {
 });
 
 treeAddEl.addEventListener("click", addFile);
+
+// ── simulate view ──────────────────────────────────────────────────────
+const appModeEl = $<HTMLDivElement>("#app-mode");
+const simEl = $<HTMLDivElement>("#sim");
+let sim: SimView | null = null;
+
+async function enterSimulate() {
+  const shape = await unwrap<ProjectShape>(
+    { cmd: "describeProject", files: project() },
+    { schemas: [] },
+  );
+  if (!sim) {
+    sim = createSim();
+    simEl.append(sim.el);
+  }
+  sim.setShape(shape);
+  document.body.classList.add("mode-simulate");
+}
+
+appModeEl.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest("button");
+  if (!btn) return;
+  for (const b of appModeEl.querySelectorAll("button")) b.classList.toggle("active", b === btn);
+  if (btn.dataset.app === "simulate") void enterSimulate();
+  else document.body.classList.remove("mode-simulate");
+});
 
 // Collapse / expand a static bottom panel (files, problems) by its toggle.
 function wireCollapse(toggleSel: string) {

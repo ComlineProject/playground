@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
+    "linkedom": "^0.18.13",
     "tsx": "^4.23.13",
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
