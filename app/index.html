@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Comline Playground</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Comline Playground</h1>
+      <span id="status" class="status">loading…</span>
+    </header>
+
+    <main>
+      <section class="pane">
+        <div class="pane-head">schema</div>
+        <textarea id="editor" spellcheck="false" autocomplete="off"></textarea>
+      </section>
+
+      <section class="pane">
+        <div class="pane-head">
+          <div class="tabs" id="tabs">
+            <button data-view="diagnostics" class="active">diagnostics</button>
+            <button data-view="ir">IR</button>
+            <button data-view="output">generated</button>
+          </div>
+          <div class="output-controls" id="output-controls" hidden>
+            <select id="target">
+              <option value="rust">rust</option>
+              <option value="typescript">typescript</option>
+            </select>
+            <select id="mode">
+              <option value="code">code</option>
+              <option value="lib">lib</option>
+            </select>
+          </div>
+        </div>
+        <div id="view" class="view"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

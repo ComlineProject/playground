@@ -1,0 +1,28 @@
+[package]
+name = "comline-playground-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The same crates the CLI composes — by git rev, so the playground runs *the
+# CLI's code*, not a re-implementation. Keep the `comline-core` /
+# `comline-codegen` revs identical across all four (one of each in the tree).
+comline-core = { git = "https://github.com/ComlineProject/core", rev = "50c17cc740676416e945582dd6e2547e8535ac03" }
+comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "d901db42d094ea9e2f59a310e6e885767abcae6b" }
+comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "890688dd579305939d2c8d378309bc64e8eb1afe" }
+comline-codegen-typescript = { git = "https://github.com/ComlineProject/comline-typescript", rev = "5c20074113a748cd96b639c38c5c030c2de9fbea" }
+rust-sitter = "0.4.5"                     # parse-error types
+
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
