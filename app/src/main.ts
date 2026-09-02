@@ -22,6 +22,7 @@ protocol Chat {
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
 const editor = $<HTMLTextAreaElement>("#editor");
+const highlightEl = $<HTMLElement>("#editor-hl code");
 const statusEl = $<HTMLSpanElement>("#status");
 const viewEl = $<HTMLDivElement>("#view");
 const tabsEl = $<HTMLDivElement>("#tabs");
@@ -131,6 +132,72 @@ function escapeHtml(s: string): string {
   );
 }
 
+// ── editor: syntax highlight + tab ─────────────────────────────────────────
+const KEYWORDS = new Set([
+  "struct", "enum", "protocol", "error", "const", "use", "import",
+  "validator", "settings", "function", "optional",
+]);
+const PRIMS = new Set([
+  "s8", "s16", "s32", "s64", "u8", "u16", "u32", "u64", "f32", "f64",
+  "bool", "str", "string", "int", "float",
+]);
+// comment | string | @annotation | number | identifier | `->` or punctuation
+const TOKEN_RE =
+  /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")|(@[A-Za-z_]\w*)|(\b\d[\w.]*)|([A-Za-z_]\w*)|(->|[{}()[\];:,!.=|])/g;
+
+function highlight(src: string): void {
+  let out = "";
+  let last = 0;
+  TOKEN_RE.lastIndex = 0;
+  for (let m = TOKEN_RE.exec(src); m; m = TOKEN_RE.exec(src)) {
+    out += escapeHtml(src.slice(last, m.index));
+    const [full, comment, str, ann, num, ident, punct] = m;
+    if (comment) out += span("comment", full);
+    else if (str) out += span("str", full);
+    else if (ann) out += span("ann", full);
+    else if (num) out += span("num", full);
+    else if (ident) {
+      const cls = KEYWORDS.has(ident)
+        ? "kw"
+        : PRIMS.has(ident) || /^[A-Z]/.test(ident)
+          ? "type"
+          : null;
+      out += cls ? span(cls, full) : escapeHtml(full);
+    } else if (punct) out += span("punct", full);
+    last = m.index + full.length;
+  }
+  out += escapeHtml(src.slice(last)) + "\n";
+  highlightEl.innerHTML = out;
+}
+const span = (cls: string, text: string) => `<span class="tok-${cls}">${escapeHtml(text)}</span>`;
+
+function syncScroll(): void {
+  const pre = highlightEl.parentElement!;
+  pre.scrollTop = editor.scrollTop;
+  pre.scrollLeft = editor.scrollLeft;
+}
+
+const INDENT = "    ";
+editor.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  e.preventDefault();
+  const { selectionStart: s, selectionEnd: en, value } = editor;
+
+  if (s === en && !e.shiftKey) {
+    document.execCommand("insertText", false, INDENT); // keeps native undo
+    return;
+  }
+
+  // (de)indent every line the selection touches
+  const from = value.lastIndexOf("\n", s - 1) + 1;
+  const block = value.slice(from, en);
+  const next = e.shiftKey
+    ? block.replace(/^( {1,4}|\t)/gm, "")
+    : block.replace(/^(?!$)/gm, INDENT); // indent non-empty lines
+  editor.setRangeText(next, from, en, "select");
+  editor.dispatchEvent(new Event("input"));
+});
+
 // ── loop ───────────────────────────────────────────────────────────────────
 let debounce: number | undefined;
 async function run() {
@@ -150,9 +217,11 @@ async function run() {
 }
 
 editor.addEventListener("input", () => {
+  highlight(editor.value);
   window.clearTimeout(debounce);
   debounce = window.setTimeout(run, 200);
 });
+editor.addEventListener("scroll", syncScroll);
 tabsEl.addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest("button");
   if (!btn) return;
@@ -164,5 +233,6 @@ tabsEl.addEventListener("click", (e) => {
 for (const el of [targetSel, modeSel]) el.addEventListener("change", () => void renderOutput());
 
 editor.value = SAMPLE;
+highlight(SAMPLE);
 statusEl.textContent = "compiling…";
 void run();
