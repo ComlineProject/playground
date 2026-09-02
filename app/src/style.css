@@ -755,6 +755,14 @@ body.mode-simulate #gen-controls {
 .behavior-config.bad {
   border-color: var(--err);
 }
+.forward-cfg {
+  margin-top: 0.3rem;
+  display: grid;
+  gap: 0.25rem;
+}
+.forward-cfg select {
+  width: 100%;
+}
 .call-args {
   margin: 0.4rem 0;
 }

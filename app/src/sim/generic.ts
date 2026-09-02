@@ -26,11 +26,21 @@ export type SimOutcome =
   | { kind: "err"; ordinal: number; data?: unknown }
   | { kind: "none" };
 
+/** Call out on another live connection and get its outcome — the capability the
+ *  engine hands a `Forward` behaviour. `undefined` outside the engine. */
+export type ForwardFn = (
+  viaConnectionId: string,
+  targetFn: string,
+  params: unknown,
+) => Promise<SimOutcome>;
+
 export interface BehaviorCtx {
   /** The decoded request params. */
   params: unknown;
   fn: FnShape;
   proto: ProtocolShape;
+  /** Set by the engine; lets a `Forward` behaviour relay to another server. */
+  forward?: ForwardFn;
 }
 
 /** What a server instance does for one function when dispatched. */
@@ -77,6 +87,7 @@ export class GenericDispatch implements Dispatch {
   constructor(
     private readonly proto: ProtocolShape,
     private readonly behaviors: BehaviorMap,
+    private readonly forward?: ForwardFn,
   ) {}
 
   calls(): readonly string[] {
@@ -94,6 +105,7 @@ export class GenericDispatch implements Dispatch {
       params: params.length ? codec.decode(params) : null,
       fn,
       proto: this.proto,
+      forward: this.forward,
     });
 
     switch (outcome.kind) {

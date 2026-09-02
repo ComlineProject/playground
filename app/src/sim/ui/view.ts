@@ -532,33 +532,91 @@ export function createSim(): SimView {
     head.append(name, sel);
     wrap.append(head);
 
-    const cfg = document.createElement("textarea");
-    cfg.className = "behavior-config mono";
-    cfg.rows = 3;
-    cfg.spellcheck = false;
-    cfg.value = JSON.stringify(setting.config, null, 1);
-    wrap.append(cfg);
-
     const applyLive = () => {
       for (const lc of wires.forInstance(inst.id)) {
         if (!lc.error) lc.setBehavior(fnName, inst.behaviors[fnName]);
       }
     };
+
+    const cfgHost = div("behavior-cfg-host");
+    wrap.append(cfgHost);
+
+    const renderConfig = () => {
+      cfgHost.replaceChildren();
+      if (inst.behaviors[fnName].kind === "forward") {
+        cfgHost.append(forwardConfig(inst, fnName, applyLive));
+        return;
+      }
+      const cfg = document.createElement("textarea");
+      cfg.className = "behavior-config mono";
+      cfg.rows = 3;
+      cfg.spellcheck = false;
+      cfg.value = JSON.stringify(inst.behaviors[fnName].config, null, 1);
+      cfg.addEventListener("change", () => {
+        try {
+          inst.behaviors[fnName].config = JSON.parse(cfg.value || "{}") as Record<string, unknown>;
+          cfg.classList.remove("bad");
+          applyLive();
+        } catch {
+          cfg.classList.add("bad");
+        }
+      });
+      cfgHost.append(cfg);
+    };
+
     sel.addEventListener("change", () => {
       setBehavior(session!, inst.id, fnName, selValue(sel) as BehaviorKind);
-      cfg.value = JSON.stringify(inst.behaviors[fnName].config, null, 1);
+      renderConfig();
       applyLive();
     });
-    cfg.addEventListener("change", () => {
-      try {
-        const parsed = JSON.parse(cfg.value || "{}") as Record<string, unknown>;
-        inst.behaviors[fnName].config = parsed;
-        cfg.classList.remove("bad");
+    renderConfig();
+    return wrap;
+  }
+
+  /** The two-select editor for a `Forward` behaviour: which connection to relay
+   *  over, and which function to call on it. */
+  function forwardConfig(inst: Instance, fnName: string, applyLive: () => void): HTMLElement {
+    const wrap = div("forward-cfg");
+    const cfg = inst.behaviors[fnName].config as { viaConnectionId?: string; targetFn?: string };
+
+    const viaSel = document.createElement("select");
+    viaSel.className = "forward-via";
+    viaSel.append(opt("", "via connection…", !cfg.viaConnectionId));
+    for (const conn of session!.connections) {
+      const c = instance(session!, conn.clientId);
+      const s = instance(session!, conn.serverId);
+      viaSel.append(
+        opt(conn.id, `${c?.name ?? conn.clientId} → ${s?.name ?? conn.serverId}`, conn.id === cfg.viaConnectionId),
+      );
+    }
+
+    const fnHost = div("forward-fn-host");
+    const renderFnSel = () => {
+      fnHost.replaceChildren();
+      const conn = session!.connections.find((x) => x.id === selValue(viaSel));
+      const s = conn && instance(session!, conn.serverId);
+      const found = s && findProtocol(session!.shape, s.schemaNs, s.protocol);
+      if (!found) return;
+      const fnSel = document.createElement("select");
+      fnSel.className = "forward-fn";
+      found.protocol.functions.forEach((f, i) =>
+        fnSel.append(opt(f.name, f.name, f.name === cfg.targetFn || (i === 0 && !cfg.targetFn))),
+      );
+      fnSel.addEventListener("change", () => {
+        cfg.targetFn = selValue(fnSel);
         applyLive();
-      } catch {
-        cfg.classList.add("bad");
-      }
+      });
+      cfg.targetFn ??= found.protocol.functions[0]?.name;
+      fnHost.append(row("fn", fnSel));
+    };
+
+    viaSel.addEventListener("change", () => {
+      cfg.viaConnectionId = selValue(viaSel);
+      renderFnSel();
+      applyLive();
     });
+    renderFnSel();
+    wrap.append(row("via", viaSel), fnHost);
     return wrap;
   }
 

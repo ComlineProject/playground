@@ -6,7 +6,15 @@
 /// leaves the others untouched.
 
 import { BEHAVIORS } from "./behavior.ts";
-import { GenericClient, GenericDispatch, type Behavior, type BehaviorMap } from "./generic.ts";
+import {
+  GenericClient,
+  GenericDispatch,
+  SimRemoteError,
+  type Behavior,
+  type BehaviorMap,
+  type ForwardFn,
+  type SimOutcome,
+} from "./generic.ts";
 import { instance, type Connection, type Session } from "./model.ts";
 import {
   Client,
@@ -47,8 +55,13 @@ const framingFor = (name: "datagram" | "jsonrpc"): (() => Framing) =>
   name === "jsonrpc" ? () => new JsonRpcFraming() : () => new DatagramFraming();
 
 /** Bind one `Connection` to real transports and run its handshake. Never throws
- *  — a refused handshake comes back as `LiveConnection.error`. */
-export async function connect(session: Session, conn: Connection): Promise<LiveConnection> {
+ *  — a refused handshake comes back as `LiveConnection.error`. `opts.forward`
+ *  gives the server's `Forward` behaviours a way to relay to another wire. */
+export async function connect(
+  session: Session,
+  conn: Connection,
+  opts: { forward?: ForwardFn } = {},
+): Promise<LiveConnection> {
   const client = instance(session, conn.clientId);
   const server = instance(session, conn.serverId);
   if (!client || !server) throw new Error("connect: unknown instance");
@@ -83,7 +96,11 @@ export async function connect(session: Session, conn: Connection): Promise<LiveC
     close: () => w.close(),
   };
 
-  const rpcServer = new Server(new GenericDispatch(protocol, behaviors), codec, makeFraming());
+  const rpcServer = new Server(
+    new GenericDispatch(protocol, behaviors, opts.forward),
+    codec,
+    makeFraming(),
+  );
   // The serve loop rejects on a handshake mismatch too — swallow it; the client
   // side reports the refusal.
   void rpcServer.serveHandshaked(w.b, handshake(server.irHash)).catch(() => {});
@@ -123,6 +140,27 @@ export async function connect(session: Session, conn: Connection): Promise<LiveC
 /// resync, where every handshake has to run again).
 export class Wires {
   private live = new Map<string, LiveConnection>();
+  /** Connections currently mid-forward — re-entering one is a cycle. */
+  private forwarding = new Set<string>();
+
+  /** Relay a call onto another live wire, for a `Forward` behaviour. */
+  private forwardVia: ForwardFn = async (viaConnId, targetFn, params): Promise<SimOutcome> => {
+    const lc = this.live.get(viaConnId);
+    if (!lc) return { kind: "err", ordinal: 0, data: { error: `forward: no connection ${viaConnId}` } };
+    if (lc.error) return { kind: "err", ordinal: 0, data: { error: `forward: ${viaConnId} refused (${lc.error})` } };
+    if (this.forwarding.has(viaConnId)) {
+      return { kind: "err", ordinal: 0, data: { error: "forwarding cycle" } };
+    }
+    this.forwarding.add(viaConnId);
+    try {
+      return { kind: "ok", value: await lc.call(targetFn, params) };
+    } catch (e) {
+      if (e instanceof SimRemoteError) return { kind: "err", ordinal: e.ordinal, data: e.data };
+      return { kind: "err", ordinal: 0, data: { error: (e as Error).message } };
+    } finally {
+      this.forwarding.delete(viaConnId);
+    }
+  };
 
   /** Incremental: match the live set to `session.connections`. */
   async sync(session: Session): Promise<void> {
@@ -135,7 +173,7 @@ export class Wires {
     }
     for (const conn of session.connections) {
       if (this.live.has(conn.id)) continue;
-      this.live.set(conn.id, await connect(session, conn));
+      this.live.set(conn.id, await connect(session, conn, { forward: this.forwardVia }));
     }
   }
 
