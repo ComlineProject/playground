@@ -10,7 +10,13 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, indentUnit } from "@codemirror/language";
 import { linter, lintKeymap, type Diagnostic as CmDiagnostic } from "@codemirror/lint";
-import { EditorState, type Range } from "@codemirror/state";
+import {
+  EditorState,
+  StateEffect,
+  StateField,
+  type Extension,
+  type Range,
+} from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -49,10 +55,41 @@ function posOf(doc: EditorState["doc"], p: LspPosition): number {
 }
 
 // ── semantic-token decorations ────────────────────────────────────────────
-function semanticHighlight(bridge: EditorBridge) {
-  return ViewPlugin.fromClass(
+// Async-derived decorations. The StateField maps the existing set through every
+// edit (so the colours shift *with* the text instead of vanishing and
+// reappearing), and a ViewPlugin recomputes it ~120 ms after the last change.
+const setTokens = StateEffect.define<DecorationSet>();
+
+const tokenField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) if (e.is(setTokens)) deco = e.value;
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+function decodeTokens(data: number[], doc: EditorState["doc"]): Range<Decoration>[] {
+  const marks: Range<Decoration>[] = [];
+  let line = 0;
+  let ch = 0;
+  for (let i = 0; i + 4 < data.length; i += 5) {
+    const [dLine, dStart, len, type] = data.slice(i, i + 5);
+    line += dLine;
+    ch = dLine === 0 ? ch + dStart : dStart;
+    const cls = TOKEN_CLASS[type];
+    if (!cls || line >= doc.lines) continue;
+    const from = doc.line(line + 1).from + ch;
+    const to = Math.min(from + len, doc.length);
+    if (to > from) marks.push(Decoration.mark({ class: `cm-${cls}` }).range(from, to));
+  }
+  return marks;
+}
+
+function semanticHighlight(bridge: EditorBridge): Extension {
+  const plugin = ViewPlugin.fromClass(
     class {
-      decorations: DecorationSet = Decoration.none;
       private timer: number | undefined;
 
       constructor(view: EditorView) {
@@ -66,30 +103,19 @@ function semanticHighlight(bridge: EditorBridge) {
       }
       private schedule(view: EditorView) {
         window.clearTimeout(this.timer);
-        this.timer = window.setTimeout(() => void this.run(view), 150);
+        this.timer = window.setTimeout(() => void this.run(view), 120);
       }
       private async run(view: EditorView) {
-        const doc = view.state.doc;
-        const st = await bridge.semanticTokens(doc.toString());
-        const marks: Range<Decoration>[] = [];
-        let line = 0;
-        let ch = 0;
-        for (let i = 0; i + 4 < st.data.length; i += 5) {
-          const [dLine, dStart, len, type] = st.data.slice(i, i + 5);
-          line += dLine;
-          ch = dLine === 0 ? ch + dStart : dStart;
-          const cls = TOKEN_CLASS[type];
-          if (!cls || line >= doc.lines) continue;
-          const from = doc.line(line + 1).from + ch;
-          const to = Math.min(from + len, doc.length);
-          if (to > from) marks.push(Decoration.mark({ class: `cm-${cls}` }).range(from, to));
-        }
-        this.decorations = Decoration.set(marks, true);
-        view.dispatch({}); // force redraw with the new decorations
+        const src = view.state.doc.toString();
+        const st = await bridge.semanticTokens(src);
+        if (view.state.doc.toString() !== src) return; // stale — a newer run is queued
+        view.dispatch({
+          effects: setTokens.of(Decoration.set(decodeTokens(st.data, view.state.doc), true)),
+        });
       }
     },
-    { decorations: (v) => v.decorations },
   );
+  return [tokenField, plugin];
 }
 
 // ── diagnostics ───────────────────────────────────────────────────────────
