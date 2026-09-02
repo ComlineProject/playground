@@ -560,44 +560,68 @@ body.mode-simulate #gen-controls {
   stroke-width: 3.5;
   filter: drop-shadow(0 0 3px currentColor);
 }
-.sim-node {
+/* the box on the canvas — one or more instance rows */
+.sim-node-group {
   position: absolute;
-  width: 150px;
+  width: 156px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-2);
-  padding: 0.5rem 0.7rem;
   cursor: grab;
   user-select: none;
   touch-action: none;
 }
-.sim-node:active {
+.sim-node-group:active {
   cursor: grabbing;
 }
+.group-cap {
+  padding: 0.25rem 0.6rem 0;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+/* one instance inside the box */
+.sim-node {
+  position: relative;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.sim-node + .sim-node {
+  border-top: 1px solid var(--border);
+}
 .sim-node.role-server {
-  border-top: 3px solid var(--accent);
+  border-left-color: var(--accent);
 }
 .sim-node.role-client {
-  border-top: 3px solid var(--ok);
+  border-left-color: var(--ok);
 }
 .sim-node.selected {
-  outline: 2px solid var(--accent);
+  background: #ffffff0d;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
-.sim-node.wired {
-  box-shadow: 0 0 0 1px var(--ok) inset;
+.sim-node.wired .node-name::after {
+  content: " ●";
+  color: var(--ok);
+  font-size: 0.6rem;
+  vertical-align: middle;
 }
 .node-name {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 .node-sub {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   color: var(--muted);
 }
 .node-port {
   position: absolute;
   right: -6px;
-  bottom: -6px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 12px;
   height: 12px;
   border-radius: 50%;
@@ -606,7 +630,7 @@ body.mode-simulate #gen-controls {
   cursor: crosshair;
 }
 .node-port:hover {
-  transform: scale(1.25);
+  transform: translateY(-50%) scale(1.25);
 }
 
 /* inspector */

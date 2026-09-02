@@ -1,7 +1,9 @@
-/// The simulation's state: the compiled `ProjectShape`, the instances placed on
-/// the canvas, and the connections between them. Plain data + pure-ish
-/// operations; the engine turns each `Connection` into a live wire and the UI
-/// renders all of it. Phase 2 (2a): many connections, not one.
+/// The simulation's state: the compiled `ProjectShape`, the nodes on the canvas
+/// (each hosting one or more instances), and the connections between instances.
+/// Plain data + pure-ish operations; the engine turns each `Connection` into a
+/// live wire and the UI renders all of it. Phase 2: many connections (2a), a
+/// node hosting several instances (2b) — e.g. a gateway that is a client of one
+/// protocol and a server of another.
 
 import { BEHAVIORS, defaultKindFor, type BehaviorKind } from "./behavior.ts";
 import { findProtocol, type ProjectShape } from "./shape.ts";
@@ -27,9 +29,18 @@ export interface Instance {
    *  a surviving instance built against the old IR, which the handshake then
    *  rejects (the version-skew demo). `resyncInstance` snaps it forward. */
   irHash: string;
+  /** The canvas node hosting this instance. */
+  nodeId: string;
+}
+
+export interface Node {
+  id: string;
+  label: string;
   /** Canvas position (the UI owns it; the engine ignores it). */
   x: number;
   y: number;
+  /** The instances in this box, in display order. Always ≥ 1. */
+  instanceIds: string[];
 }
 
 export interface Connection {
@@ -40,6 +51,7 @@ export interface Connection {
 
 export interface Session {
   shape: ProjectShape;
+  nodes: Node[];
   instances: Instance[];
   connections: Connection[];
   /** Fixed per-frame delivery delay for every wire, ms. */
@@ -50,9 +62,11 @@ let counter = 0;
 const nextId = () => `i${++counter}`;
 let connCounter = 0;
 const nextConnId = () => `c${++connCounter}`;
+let nodeCounter = 0;
+const nextNodeId = () => `n${++nodeCounter}`;
 
 export function emptySession(shape: ProjectShape): Session {
-  return { shape, instances: [], connections: [], latencyMs: 0 };
+  return { shape, nodes: [], instances: [], connections: [], latencyMs: 0 };
 }
 
 /** Seed a server's per-function behaviour map from the protocol shape. */
@@ -72,7 +86,10 @@ function seedBehaviors(
 
 export function addInstance(
   session: Session,
-  spec: { schemaNs: string; protocol: string; role: Role; x?: number; y?: number },
+  spec: { schemaNs: string; protocol: string; role: Role },
+  /** Drop onto an existing node to add the instance there; otherwise a new
+   *  node is created at `x` / `y`. */
+  place: { nodeId?: string; x?: number; y?: number } = {},
 ): Instance {
   const n = session.instances.filter((i) => i.protocol === spec.protocol).length + 1;
   const inst: Instance = {
@@ -83,22 +100,60 @@ export function addInstance(
     protocol: spec.protocol,
     behaviors: spec.role === "server" ? seedBehaviors(session, spec.schemaNs, spec.protocol) : {},
     irHash: findProtocol(session.shape, spec.schemaNs, spec.protocol)?.schema.ir_hash ?? "0x0",
-    x: spec.x ?? 0,
-    y: spec.y ?? 0,
+    nodeId: "",
   };
   session.instances.push(inst);
+
+  const host = place.nodeId ? session.nodes.find((nd) => nd.id === place.nodeId) : undefined;
+  if (host) {
+    host.instanceIds.push(inst.id);
+    inst.nodeId = host.id;
+  } else {
+    const node: Node = {
+      id: nextNodeId(),
+      label: inst.name,
+      x: place.x ?? 0,
+      y: place.y ?? 0,
+      instanceIds: [inst.id],
+    };
+    session.nodes.push(node);
+    inst.nodeId = node.id;
+  }
   return inst;
 }
 
 export function removeInstance(session: Session, id: string): void {
+  const inst = instance(session, id);
   session.instances = session.instances.filter((i) => i.id !== id);
   session.connections = session.connections.filter(
     (c) => c.clientId !== id && c.serverId !== id,
   );
+  if (inst) {
+    const node = session.nodes.find((nd) => nd.id === inst.nodeId);
+    if (node) {
+      node.instanceIds = node.instanceIds.filter((x) => x !== id);
+      if (node.instanceIds.length === 0) {
+        session.nodes = session.nodes.filter((nd) => nd.id !== node.id);
+      }
+    }
+  }
 }
 
 export function instance(session: Session, id: string): Instance | undefined {
   return session.instances.find((i) => i.id === id);
+}
+
+export function node(session: Session, id: string): Node | undefined {
+  return session.nodes.find((nd) => nd.id === id);
+}
+
+/** Move a node (and every instance it hosts) on the canvas. */
+export function moveNode(session: Session, nodeId: string, x: number, y: number): void {
+  const nd = session.nodes.find((n) => n.id === nodeId);
+  if (nd) {
+    nd.x = Math.max(0, Math.round(x));
+    nd.y = Math.max(0, Math.round(y));
+  }
 }
 
 /** Every connection an instance is an end of. */
@@ -172,6 +227,9 @@ export function rebuild(session: Session, shape: ProjectShape): void {
     kept.push(inst);
   }
   session.instances = kept;
+  const liveIds = new Set(kept.map((i) => i.id));
+  for (const nd of session.nodes) nd.instanceIds = nd.instanceIds.filter((id) => liveIds.has(id));
+  session.nodes = session.nodes.filter((nd) => nd.instanceIds.length > 0);
   session.connections = session.connections.filter(
     (c) => instance(session, c.clientId) && instance(session, c.serverId),
   );

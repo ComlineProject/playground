@@ -2,7 +2,7 @@
 /// canvas, connect them (inspector dropdown or a port-to-node drag), send a
 /// call, watch the frames — plus the 1e refusal path, the canvas polish (free
 /// placement, drag-to-connect, frame filters), and 2a fan-out (many
-/// connections, one merged log).
+/// connections, one merged log), and 2b node grouping (a gateway box).
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -221,12 +221,14 @@ test("polish — dropped nodes are absolutely placed and don't stack", () => {
   sim.setShape(shape());
   const { server, client } = place(sim);
 
-  for (const n of [server, client]) {
-    assert.match(n.style.left, /^\d+px$/, "node is positioned by an inline offset");
-    assert.match(n.style.top, /^\d+px$/);
+  const groups = [server, client].map((n) => n.closest(".sim-node-group") as HTMLElement);
+  assert.equal(new Set(groups).size, 2, "each instance is in its own group");
+  for (const g of groups) {
+    assert.match(g.style.left, /^\d+px$/, "group is positioned by an inline offset");
+    assert.match(g.style.top, /^\d+px$/);
   }
-  assert.notEqual(server.style.top, client.style.top, "the two nodes are offset, not stacked");
-  assert.ok(server.querySelector(".node-port"), "each node has a connect port");
+  assert.notEqual(groups[0].style.top, groups[1].style.top, "the two groups are offset, not stacked");
+  assert.ok(server.querySelector(".node-port"), "each instance row has a connect port");
   sim.destroy();
 });
 
@@ -422,6 +424,75 @@ test("2a — fan-out: one server, two clients, two connections; drop one, the ot
   fire(sendBtn(), "click");
   await tick();
   assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "HI"/, "client 2 still works");
+
+  sim.destroy();
+});
+
+test("2b — a node hosts a client and a server; the grouped gateway relays a call", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  const spec = { schemaNs: "chat", protocol: "Chat" };
+  const groups = () => [...sim.el.querySelectorAll(".sim-node-group")] as HTMLElement[];
+  const rows = (root: ParentNode = sim.el) => [...root.querySelectorAll(".sim-node")] as HTMLElement[];
+  const sendBtn = () =>
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send") as HTMLButtonElement;
+
+  // one box hosting the edge server AND the edge client — the gateway
+  drop(canvas, { ...spec, role: "server" });
+  const gatewayId = groups()[0].dataset.nodeId!;
+  const gatewayEl = () => sim.el.querySelector(`.sim-node-group[data-node-id="${gatewayId}"]`)!;
+  drop(gatewayEl(), { ...spec, role: "client" }); // drop onto the box → adds to it
+  assert.equal(rows(gatewayEl()).length, 2, "the gateway box holds two instances");
+  assert.equal(groups().length, 1);
+
+  // a backend server and a caller client, each its own box
+  drop(canvas, { ...spec, role: "server" });
+  drop(canvas, { ...spec, role: "client" });
+  assert.equal(groups().length, 3);
+
+  const gateway = gatewayEl();
+  const edgeSrv = rows(gateway).find((n) => n.classList.contains("role-server"))!;
+  const edgeCli = rows(gateway).find((n) => n.classList.contains("role-client"))!;
+  const backend = rows().find(
+    (n) => n.classList.contains("role-server") && !gateway.contains(n),
+  )!;
+  const caller = rows().find(
+    (n) => n.classList.contains("role-client") && !gateway.contains(n),
+  )!;
+  const backendName = backend.querySelector(".node-name")!.textContent!;
+
+  const connect = (fromPort: Element, toNode: Element) => {
+    fire(fromPort.querySelector(".node-port")!, "pointerdown");
+    fire(toNode, "pointerenter");
+    window.dispatchEvent(new window.Event("pointerup"));
+  };
+  connect(edgeCli, backend); // edge-client → backend
+  await tick();
+  connect(caller, sim.el.querySelector(`.sim-node[data-id="${edgeSrv.dataset.id}"]`)!); // caller → edge-server
+  await tick();
+  assert.equal(sim.el.querySelectorAll(".sim-wire .wire-live").length, 2);
+
+  // backend replies with a constant
+  fire(sim.el.querySelector(`.sim-node[data-id="${backend.dataset.id}"]`)!, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "FROM-BACKEND", seq: 7 } });
+  fire(cfg, "change");
+
+  // edge-server forwards `send` over the edge-client → backend connection
+  fire(sim.el.querySelector(`.sim-node[data-id="${edgeSrv.dataset.id}"]`)!, "click");
+  pick(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement, "forward");
+  const via = sim.el.querySelector(".forward-via") as HTMLSelectElement;
+  const toBackend = [...via.options].find((o) => o.textContent!.endsWith(backendName))!;
+  pick(via, toBackend.value);
+
+  // caller calls send → the reply comes from the backend, through the gateway
+  fire(sim.el.querySelector(`.sim-node[data-id="${caller.dataset.id}"]`)!, "click");
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(sendBtn(), "click");
+  await tick();
+  assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "FROM-BACKEND"/);
 
   sim.destroy();
 });

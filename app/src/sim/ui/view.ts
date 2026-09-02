@@ -1,8 +1,9 @@
-/// The full-width simulate view: a palette of protocol × role, a canvas the
-/// instances sit on, the connections between them, an inspector (instance facts,
-/// per-function behaviours, per-connection controls, and — for a connected
-/// client — the call form), and the merged frame list. Phase 2 (2a): many
-/// connections.
+/// The full-width simulate view: a palette of protocol × role, a canvas of
+/// node boxes (each hosting one or more instances), the connections between
+/// instances, an inspector (instance facts, per-function behaviours,
+/// per-connection controls, and — for a connected client — the call form), and
+/// the merged frame list. Phase 2: many connections (2a), a node hosting
+/// several instances — a gateway (2b).
 
 import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
 import { Wires } from "../engine.ts";
@@ -13,6 +14,7 @@ import {
   connectionsFor,
   emptySession,
   instance,
+  moveNode,
   rebuild,
   removeConnection,
   removeInstance,
@@ -20,6 +22,7 @@ import {
   setBehavior,
   type Connection,
   type Instance,
+  type Node,
   type Role,
   type Session,
 } from "../model.ts";
@@ -97,13 +100,12 @@ export function createSim(): SimView {
   }
 
   // ── canvas ───────────────────────────────────────────────────────────
-  const NODE_W = 150;
-  const NODE_H = 52;
-  let hoverId: string | null = null; // node the pointer is over, for drop-to-connect
+  let hoverId: string | null = null; // instance row the pointer is over, for drop-to-connect
 
   const dropHint = document.createElement("p");
   dropHint.className = "muted pad canvas-hint";
-  dropHint.textContent = "drag a client and a server here, then drag between their ports";
+  dropHint.textContent =
+    "drag roles here — drop onto a box to add to it (a gateway), then drag between ports";
   canvasEl.append(dropHint);
 
   /** Event point in canvas coordinates, or `null` when the environment has no
@@ -120,20 +122,22 @@ export function createSim(): SimView {
     const raw = e.dataTransfer?.getData("application/json");
     if (!raw || !session) return;
     const spec = JSON.parse(raw) as { schemaNs: string; protocol: string; role: Role };
+    const ontoNode = (e.target as HTMLElement | null)?.closest<HTMLElement>(".sim-node-group");
     const p = canvasPoint(e);
-    const n = session.instances.length;
-    const inst = addInstance(session, {
-      ...spec,
-      x: Math.max(8, (p?.x ?? 48 + n * 30) - NODE_W / 2),
-      y: Math.max(8, (p?.y ?? 48 + n * 26) - NODE_H / 2),
-    });
+    const n = session.nodes.length;
+    const inst = ontoNode?.dataset.nodeId
+      ? addInstance(session, spec, { nodeId: ontoNode.dataset.nodeId })
+      : addInstance(session, spec, {
+          x: Math.max(8, (p?.x ?? 48 + n * 34) - 75),
+          y: Math.max(8, (p?.y ?? 48 + n * 30) - 26),
+        });
     selectedId = inst.id;
     selectedConnId = null;
     renderAll();
   });
 
-  function nodeEl(id: string): HTMLElement | null {
-    return canvasEl.querySelector<HTMLElement>(`.sim-node[data-id="${id}"]`);
+  function nodeEl(instanceId: string): HTMLElement | null {
+    return canvasEl.querySelector<HTMLElement>(`.sim-node[data-id="${instanceId}"]`);
   }
 
   function connected(id: string): boolean {
@@ -155,18 +159,33 @@ export function createSim(): SimView {
   }
 
   function renderCanvas() {
-    for (const n of [...canvasEl.querySelectorAll(".sim-node")]) n.remove();
+    for (const g of [...canvasEl.querySelectorAll(".sim-node-group")]) g.remove();
     if (!session) return;
-    for (const inst of session.instances) canvasEl.append(nodeCard(inst));
-    dropHint.hidden = session.instances.length > 0;
+    for (const nd of session.nodes) canvasEl.append(groupCard(nd));
+    dropHint.hidden = session.nodes.length > 0;
     drawWires();
   }
 
-  function nodeCard(inst: Instance): HTMLElement {
+  function groupCard(nd: Node): HTMLElement {
+    const g = div("sim-node-group");
+    g.dataset.nodeId = nd.id;
+    g.style.left = `${nd.x}px`;
+    g.style.top = `${nd.y}px`;
+    if (nd.instanceIds.length > 1) {
+      const cap = div("group-cap mono");
+      cap.textContent = `${nd.label} · ${nd.instanceIds.length}`;
+      g.append(cap);
+    }
+    for (const id of nd.instanceIds) {
+      const inst = session!.instances.find((i) => i.id === id);
+      if (inst) g.append(instRow(inst, nd, g));
+    }
+    return g;
+  }
+
+  function instRow(inst: Instance, nd: Node, groupEl: HTMLElement): HTMLElement {
     const n = div(`sim-node role-${inst.role}`);
     n.dataset.id = inst.id;
-    n.style.left = `${inst.x}px`;
-    n.style.top = `${inst.y}px`;
     if (inst.id === selectedId) n.classList.add("selected");
     if (connected(inst.id)) n.classList.add("wired");
 
@@ -181,7 +200,7 @@ export function createSim(): SimView {
     n.append(name, sub, port);
 
     n.addEventListener("click", () => select(inst.id));
-    n.addEventListener("pointerdown", (e) => startNodeDrag(e, inst, n));
+    n.addEventListener("pointerdown", (e) => startGroupDrag(e, nd, groupEl));
     port.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       startConnectDrag(e, inst);
@@ -193,24 +212,23 @@ export function createSim(): SimView {
     return n;
   }
 
-  function startNodeDrag(e: PointerEvent, inst: Instance, n: HTMLElement) {
+  function startGroupDrag(e: PointerEvent, nd: Node, groupEl: HTMLElement) {
     if ((e.target as HTMLElement | null)?.closest(".node-port")) return;
     const start = canvasPoint(e);
     if (!start) return; // no layout — the click handler does the selecting
-    const ox = start.x - inst.x;
-    const oy = start.y - inst.y;
+    const ox = start.x - nd.x;
+    const oy = start.y - nd.y;
     let moved = false;
-    n.setPointerCapture?.(e.pointerId);
+    groupEl.setPointerCapture?.(e.pointerId);
 
     const move = (ev: PointerEvent) => {
       const p = canvasPoint(ev);
       if (!p) return;
       if (!moved && Math.hypot(p.x - start.x, p.y - start.y) < 4) return;
       moved = true;
-      inst.x = Math.max(0, Math.round(p.x - ox));
-      inst.y = Math.max(0, Math.round(p.y - oy));
-      n.style.left = `${inst.x}px`;
-      n.style.top = `${inst.y}px`;
+      moveNode(session!, nd.id, p.x - ox, p.y - oy);
+      groupEl.style.left = `${nd.x}px`;
+      groupEl.style.top = `${nd.y}px`;
       drawWires();
     };
     const up = () => {
@@ -223,8 +241,8 @@ export function createSim(): SimView {
 
   function startConnectDrag(e: PointerEvent, from: Instance) {
     hoverId = null;
-    const fromNode = nodeEl(from.id);
-    const a = fromNode ? center(fromNode) : { x: 0, y: 0 };
+    const fromRow = nodeEl(from.id);
+    const a = fromRow ? center(fromRow) : { x: 0, y: 0 };
     const temp = document.createElementNS(SVGNS, "line");
     temp.setAttribute("class", "wire-drag");
     for (const [k, v] of [
@@ -301,8 +319,18 @@ export function createSim(): SimView {
     }
   }
 
-  function center(node: HTMLElement) {
-    return { x: node.offsetLeft + node.offsetWidth / 2, y: node.offsetTop + node.offsetHeight / 2 };
+  /** Centre of an element in canvas coordinates — walks the offset chain, so an
+   *  instance row nested in a positioned node group still resolves. */
+  function center(el: HTMLElement) {
+    let x = el.offsetWidth / 2;
+    let y = el.offsetHeight / 2;
+    let e: HTMLElement | null = el;
+    while (e && e !== canvasEl) {
+      x += e.offsetLeft;
+      y += e.offsetTop;
+      e = e.offsetParent as HTMLElement | null;
+    }
+    return { x, y };
   }
 
   // ── wires ────────────────────────────────────────────────────────────
