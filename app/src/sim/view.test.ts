@@ -107,8 +107,60 @@ test("1d — place, connect, call, and see the reply and frames", async () => {
   assert.match(out.textContent!, /"body": "HI"/);
   assert.ok(out.classList.contains("ok"));
 
-  const frames = sim.el.querySelectorAll(".sim-frames-list .frame-row");
+  const frames = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
   assert.ok(frames.length >= 4, `expected handshake + call + reply frames, got ${frames.length}`);
+  assert.ok(
+    frames.some((r) => r.classList.contains("frame-handshake")),
+    "handshake frames are labelled",
+  );
+
+  // expand the request frame — its decoded params are shown
+  const reqRow = frames.find((r) => r.querySelector(".frame-fn")?.textContent === "send")!;
+  (reqRow as HTMLDetailsElement).open = true;
+  fire(reqRow, "toggle");
+  assert.match(reqRow.querySelector(".frame-body")!.textContent!, /"text": "hello"/);
+  assert.match(reqRow.querySelector(".frame-body")!.textContent!, /comline\.datagram/);
+
+  sim.destroy();
+});
+
+test("1e — resyncing only the server after a schema edit refuses the handshake", async () => {
+  const V1 = CHAT;
+  const V2 = CHAT.replace("seq: u64", "seq: u64\n    tag: string"); // IR changes
+
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(describe_project([{ path: "chat.ids", source: V1 }]) as ProjectShape);
+
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+  const nodes = [...sim.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  const server = nodes.find((n) => n.classList.contains("role-server"))!;
+  const client = nodes.find((n) => n.classList.contains("role-client"))!;
+
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  assert.ok(sim.el.querySelector(".sim-wire .wire-live"), "connected on V1");
+
+  // edit the schema and return to simulate — both instances keep their V1 hash
+  sim.setShape(describe_project([{ path: "chat.ids", source: V2 }]) as ProjectShape);
+  await tick();
+  assert.ok(sim.el.querySelector(".sim-wire .wire-live"), "still fine — neither end resynced");
+
+  // resync ONLY the server, then it and the (still-V1) client disagree
+  fire(sim.el.querySelector(`.sim-node[data-id="${server.dataset.id}"]`)!, "click");
+  const resyncBtn = [...sim.el.querySelectorAll(".sim-inspector .sim-btn")].find((b) =>
+    b.textContent!.startsWith("resync"),
+  ) as HTMLButtonElement;
+  assert.ok(resyncBtn, "a resync button is offered for the stale instance");
+  fire(resyncBtn, "click");
+  await tick();
+
+  assert.ok(sim.el.querySelector(".sim-wire .wire-refused"), "the wire shows refused");
+  assert.ok(sim.el.querySelector(".sim-frames-list .frame-refused"), "a refusal row is logged");
+  assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /connection refused · handshake/);
 
   sim.destroy();
 });

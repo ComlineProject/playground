@@ -12,6 +12,7 @@ import {
   instance,
   rebuild,
   removeInstance,
+  resyncInstance,
   setBehavior,
   setConnection,
   type Instance,
@@ -19,6 +20,7 @@ import {
   type Session,
 } from "../model.ts";
 import { findProtocol, type ProjectShape } from "../shape.ts";
+import type { DecodeCtx } from "../framedecode.ts";
 import { argsForm, type ArgsForm } from "./argsform.ts";
 import { frameLog } from "./framelog.ts";
 
@@ -162,7 +164,7 @@ export function createSim(): SimView {
     line.setAttribute("y1", String(a.y));
     line.setAttribute("x2", String(b.x));
     line.setAttribute("y2", String(b.y));
-    line.setAttribute("class", live ? "wire-live" : "wire-pending");
+    line.setAttribute("class", live?.error ? "wire-refused" : live ? "wire-live" : "wire-pending");
     wireSvg.append(line);
   }
 
@@ -181,7 +183,23 @@ export function createSim(): SimView {
         flashInspectorError((e as Error).message);
       }
     }
-    flog.attach(live?.tap ?? null);
+    let ctx: DecodeCtx | undefined;
+    if (live && session) {
+      const found = findProtocol(
+        session.shape,
+        instance(session, session.connection!.serverId)!.schemaNs,
+        instance(session, session.connection!.serverId)!.protocol,
+      );
+      if (found) {
+        ctx = {
+          clientName: live.clientName,
+          serverName: live.serverName,
+          framing: live.framing,
+          fnNames: found.protocol.functions.map((f) => f.name),
+        };
+      }
+    }
+    flog.attach(live?.tap ?? null, ctx, live?.error ?? null);
     renderCanvas();
     renderInspector();
   }
@@ -228,10 +246,18 @@ export function createSim(): SimView {
     );
     const hash = document.createElement("button");
     hash.className = "hash-copy mono";
-    hash.textContent = found.schema.ir_hash;
+    hash.textContent = sel.irHash;
     hash.title = "copy ir_hash";
-    hash.addEventListener("click", () => void navigator.clipboard?.writeText(found.schema.ir_hash));
+    hash.addEventListener("click", () => void navigator.clipboard?.writeText(sel.irHash));
     inspectorEl.append(row("ir_hash", hash));
+    if (sel.irHash !== found.schema.ir_hash) {
+      const resync = button("resync — schema changed", "danger", () => {
+        resyncInstance(session!, sel.id);
+        void reconnect();
+        renderAll();
+      });
+      inspectorEl.append(resync);
+    }
 
     // remove
     const rm = button("remove instance", "danger", () => {
@@ -265,7 +291,23 @@ export function createSim(): SimView {
       void reconnect();
     });
     inspectorEl.append(section("connection"), row("partner", connectSel));
-    if (session.connection && live) inspectorEl.append(muted("● live", "ok"));
+
+    const latency = document.createElement("input");
+    latency.type = "number";
+    latency.min = "0";
+    latency.step = "10";
+    latency.value = String(session.latencyMs);
+    latency.addEventListener("change", () => {
+      session!.latencyMs = Math.max(0, Number(latency.value) || 0);
+      void reconnect();
+    });
+    inspectorEl.append(row("latency ms", latency));
+
+    if (session.connection && live?.error) {
+      inspectorEl.append(muted(`connection refused · ${live.error}`, "err"));
+    } else if (session.connection && live) {
+      inspectorEl.append(muted("● live", "ok"));
+    }
 
     // server: per-function behaviours
     if (sel.role === "server") {
@@ -276,7 +318,7 @@ export function createSim(): SimView {
     }
 
     // client + live: the call form
-    if (sel.role === "client" && live && connectedPartnerId(sel)) {
+    if (sel.role === "client" && live && !live.error && connectedPartnerId(sel)) {
       inspectorEl.append(renderCallForm(sel));
     }
   }
@@ -308,7 +350,7 @@ export function createSim(): SimView {
     wrap.append(cfg);
 
     const applyLive = () => {
-      if (live && connectedPartnerId(inst)) live.setBehavior(fnName, inst.behaviors[fnName]);
+      if (live && !live.error && connectedPartnerId(inst)) live.setBehavior(fnName, inst.behaviors[fnName]);
     };
     sel.addEventListener("change", () => {
       setBehavior(session!, inst.id, fnName, selValue(sel) as BehaviorKind);

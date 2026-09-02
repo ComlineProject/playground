@@ -1,13 +1,16 @@
-/// The frame list under the canvas. Subscribes to a `Tap` and appends a row
-/// per frame. 1d keeps it plain — seq, direction, kind, byte length; 1e turns
-/// rows into expandable envelope inspectors.
+/// The frame inspector under the canvas. A row per frame — direction, kind,
+/// function, Δ since the previous frame, byte length — expanding to the decoded
+/// envelope, the raw hex, and the framing name. Handshake frames read
+/// distinctly; a refused connection gets its own row.
 
+import { describeFrame, toHex, type DecodeCtx } from "../framedecode.ts";
 import type { Frame, Tap } from "../transport.ts";
 
 export interface FrameLog {
   el: HTMLElement;
-  /** Point at a new tap (a fresh connection); clears the list. */
-  attach(tap: Tap | null): void;
+  /** Point at a new connection's tap. `ctx` decodes the frames; `error` (e.g.
+   *  `"handshake"`) appends a refusal row. Clears the list. */
+  attach(tap: Tap | null, ctx?: DecodeCtx, error?: string | null): void;
 }
 
 export function frameLog(): FrameLog {
@@ -16,59 +19,135 @@ export function frameLog(): FrameLog {
 
   const head = document.createElement("div");
   head.className = "sim-frames-head";
-  head.textContent = "frames";
+  const title = document.createElement("span");
+  title.textContent = "frames";
+  const clear = document.createElement("button");
+  clear.className = "icon-btn";
+  clear.textContent = "clear";
+  head.append(title, clear);
 
   const list = document.createElement("div");
-  list.className = "sim-frames-list mono";
-
-  const empty = document.createElement("p");
-  empty.className = "muted pad";
-  empty.textContent = "no connection";
-  list.append(empty);
+  list.className = "sim-frames-list";
 
   el.append(head, list);
 
   let unsub: (() => void) | null = null;
+  let ctx: DecodeCtx | null = null;
+  let prevAt = 0;
+  let first = true;
 
-  const row = (f: Frame) => {
-    const r = document.createElement("div");
-    r.className = `frame-row frame-${f.kind}`;
-    r.append(
-      span("frame-seq", String(f.seq).padStart(3, "0")),
-      span("frame-dir", `${f.from} → ${f.to}`),
-      span("frame-kind", f.kind),
-      span("frame-len", `${f.bytes.length} B`),
-    );
-    return r;
+  const empty = () => {
+    const p = document.createElement("p");
+    p.className = "muted pad";
+    p.textContent = "no connection";
+    return p;
   };
+
+  function addRow(f: Frame) {
+    const detail = ctx ? describeFrame(f, ctx) : { kind: f.kind, framing: "?" };
+    const delta = first ? 0 : Math.round(f.at - prevAt);
+    prevAt = f.at;
+    first = false;
+
+    const row = document.createElement("details");
+    row.className = `frame-row frame-${detail.kind}`;
+
+    const summary = document.createElement("summary");
+    summary.append(
+      cell("frame-seq", String(f.seq).padStart(3, "0")),
+      cell("frame-dir", `${f.from} → ${f.to}`),
+      cell("frame-kind", detail.kind),
+      cell("frame-fn", detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : "")),
+      cell("frame-delta", delta ? `+${delta} ms` : ""),
+      cell("frame-len", `${f.bytes.length} B`),
+    );
+    row.append(summary);
+
+    const body = document.createElement("div");
+    body.className = "frame-body mono";
+    body.append(kv("framing", detail.framing));
+    if (detail.handshake) {
+      body.append(
+        kv("ir_hash", detail.handshake.irHash),
+        kv("wire_format", detail.handshake.wireFormat),
+        kv("framing_name", detail.handshake.framing),
+      );
+    }
+    if (detail.requestId !== undefined) body.append(kv("request_id", detail.requestId));
+    if ("params" in detail) body.append(json("params", detail.params));
+    if ("ok" in detail) body.append(json("ok", detail.ok));
+    if (detail.err) body.append(json(`err · ordinal ${detail.err.ordinal}`, detail.err.body));
+
+    const hexToggle = document.createElement("button");
+    hexToggle.className = "hex-toggle";
+    hexToggle.textContent = "hex";
+    const hex = document.createElement("pre");
+    hex.className = "frame-hex";
+    hex.hidden = true;
+    hex.textContent = toHex(f.bytes);
+    hexToggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      hex.hidden = !hex.hidden;
+    });
+    body.append(hexToggle, hex);
+
+    row.append(body);
+    list.append(row);
+    list.scrollTop = list.scrollHeight;
+  }
+
+  function refusedRow(reason: string) {
+    const r = document.createElement("div");
+    r.className = "frame-row frame-refused";
+    r.textContent = `connection refused · ${reason}`;
+    list.append(r);
+  }
+
+  clear.addEventListener("click", () => {
+    list.replaceChildren();
+    prevAt = 0;
+    first = true;
+  });
 
   return {
     el,
-    attach(tap) {
+    attach(tap, decodeCtx, error) {
       unsub?.();
       unsub = null;
+      ctx = decodeCtx ?? null;
+      prevAt = 0;
+      first = true;
       list.replaceChildren();
       if (!tap) {
-        list.append(empty);
+        list.append(empty());
         return;
       }
-      for (const f of tap.frames) list.append(row(f));
-      scroll(list);
-      unsub = tap.on((f) => {
-        list.append(row(f));
-        scroll(list);
-      });
+      for (const f of tap.frames) addRow(f);
+      if (error) refusedRow(error);
+      unsub = tap.on(addRow);
     },
   };
 }
 
-function span(cls: string, text: string): HTMLSpanElement {
+function cell(cls: string, text: string): HTMLSpanElement {
   const s = document.createElement("span");
   s.className = cls;
   s.textContent = text;
   return s;
 }
-
-function scroll(el: HTMLElement): void {
-  el.scrollTop = el.scrollHeight;
+function kv(k: string, v: string): HTMLElement {
+  const d = document.createElement("div");
+  d.className = "frame-kv";
+  d.append(cell("frame-k", k), cell("frame-v", v));
+  return d;
+}
+function json(k: string, v: unknown): HTMLElement {
+  const d = document.createElement("div");
+  d.className = "frame-kv";
+  const kk = cell("frame-k", k);
+  const pre = document.createElement("pre");
+  pre.className = "frame-json";
+  pre.textContent = JSON.stringify(v, null, 2);
+  d.append(kk, pre);
+  return d;
 }

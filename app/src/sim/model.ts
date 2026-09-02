@@ -22,6 +22,11 @@ export interface Instance {
   protocol: string;
   /** Server only: one behaviour per function name. Empty for a client. */
   behaviors: Record<string, BehaviorSetting>;
+  /** The schema's `ir_hash` when this instance was placed or last resynced.
+   *  A `rebuild` does NOT touch it — so editing a schema and returning leaves
+   *  a surviving instance built against the old IR, which the handshake then
+   *  rejects (the version-skew demo). `resyncInstance` snaps it forward. */
+  irHash: string;
   /** Canvas position (the UI owns it; the engine ignores it). */
   x: number;
   y: number;
@@ -36,13 +41,15 @@ export interface Session {
   shape: ProjectShape;
   instances: Instance[];
   connection: Connection | null;
+  /** Fixed per-frame delivery delay for the wire, ms. */
+  latencyMs: number;
 }
 
 let counter = 0;
 const nextId = () => `i${++counter}`;
 
 export function emptySession(shape: ProjectShape): Session {
-  return { shape, instances: [], connection: null };
+  return { shape, instances: [], connection: null, latencyMs: 0 };
 }
 
 /** Seed a server's per-function behaviour map from the protocol shape. */
@@ -72,6 +79,7 @@ export function addInstance(
     schemaNs: spec.schemaNs,
     protocol: spec.protocol,
     behaviors: spec.role === "server" ? seedBehaviors(session, spec.schemaNs, spec.protocol) : {},
+    irHash: findProtocol(session.shape, spec.schemaNs, spec.protocol)?.schema.ir_hash ?? "0x0",
     x: spec.x ?? 0,
     y: spec.y ?? 0,
   };
@@ -124,7 +132,8 @@ export function setBehavior(
 
 /** Re-point the session at a freshly compiled shape. An instance survives if
  *  its `schemaNs::protocol` still exists; its behaviour map keeps the configs
- *  of functions that remain and gains defaults for new ones. */
+ *  of functions that remain and gains defaults for new ones. Its `irHash`
+ *  snapshot is deliberately left as-is — see `Instance.irHash`. */
 export function rebuild(session: Session, shape: ProjectShape): void {
   session.shape = shape;
   const kept: Instance[] = [];
@@ -151,4 +160,12 @@ export function rebuild(session: Session, shape: ProjectShape): void {
   ) {
     session.connection = null;
   }
+}
+
+/** Snap an instance's `irHash` forward to the currently-compiled schema, so a
+ *  connection built after a schema edit handshakes cleanly again. */
+export function resyncInstance(session: Session, id: string): void {
+  const inst = instance(session, id);
+  const found = inst && findProtocol(session.shape, inst.schemaNs, inst.protocol);
+  if (inst && found) inst.irHash = found.schema.ir_hash;
 }
