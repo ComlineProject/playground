@@ -288,22 +288,27 @@ main {
   padding: 0.75rem 1rem;
   font-size: 0.8rem;
 }
-/* generated: file tree beside a single-file view */
+/* generated: a single-file view over a file tree — mirrors the editor pane */
 .view.split {
   display: flex;
+  flex-direction: column;
   padding: 0;
   overflow: hidden;
 }
-.gen-tree {
-  flex: 0 0 38%;
-  border-right: 1px solid var(--border);
-  background: var(--bg-2);
-}
 .gen-view {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 0.75rem 1rem;
+}
+.tree-head .path {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 0.75rem;
 }
 
 .view .code {

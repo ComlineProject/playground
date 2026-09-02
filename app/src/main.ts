@@ -483,9 +483,27 @@ function paintOutput() {
   if (!genFiles) return;
   viewEl.classList.add("split");
 
-  const treePane = document.createElement("div");
-  treePane.className = "gen-tree";
-  renderTreeInto(treePane, buildTree(genFiles.map((f) => ({ path: f.path, data: f }))), {
+  const codePane = document.createElement("div");
+  codePane.className = "gen-view";
+  const pre = document.createElement("pre");
+  pre.className = "code";
+  pre.textContent = genFiles.find((f) => f.path === genActivePath)?.contents ?? "";
+  codePane.append(pre);
+
+  // A tree panel at the bottom, mirroring the schema file tree on the left.
+  const panel = document.createElement("div");
+  panel.className = "tree-panel";
+  const head = document.createElement("div");
+  head.className = "tree-head";
+  const title = document.createElement("span");
+  title.textContent = "generated";
+  const path = document.createElement("span");
+  path.className = "path";
+  path.textContent = genActivePath ?? "";
+  head.append(title, path);
+  const tree = document.createElement("div");
+  tree.className = "gen-tree";
+  renderTreeInto(tree, buildTree(genFiles.map((f) => ({ path: f.path, data: f }))), {
     collapsed: genCollapsed,
     isActive: (l) => l.full === genActivePath,
     onPick: (l) => {
@@ -497,15 +515,9 @@ function paintOutput() {
       paintOutput();
     },
   });
+  panel.append(head, tree);
 
-  const codePane = document.createElement("div");
-  codePane.className = "gen-view";
-  const pre = document.createElement("pre");
-  pre.className = "code";
-  pre.textContent = genFiles.find((f) => f.path === genActivePath)?.contents ?? "";
-  codePane.append(pre);
-
-  viewEl.replaceChildren(treePane, codePane);
+  viewEl.replaceChildren(codePane, panel);
 }
 
 function escapeHtml(s: string): string {
