@@ -42,13 +42,19 @@ jobs:
       - name: Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+
+      - name: Install
+        working-directory: app
+        run: npm install
+
+      - name: Test (sim wire + drift guard)
+        working-directory: app
+        run: npm test
 
       - name: Build site
         working-directory: app
-        run: |
-          npm install
-          npm run build
+        run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
