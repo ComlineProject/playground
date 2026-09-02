@@ -407,11 +407,6 @@ enum TypeRef {
     Union { of: Vec<TypeRef> },
 }
 
-const PRIM_NAMES: &[&str] = &[
-    "bool", "u8", "u16", "u32", "u64", "u128", "s8", "s16", "s32", "s64", "s128", "f32", "f64",
-    "float", "str", "string",
-];
-
 /// Parse and freeze every file, then describe each frozen schema's protocols,
 /// errors and types. `files` is `[{ path, source }]`.
 #[wasm_bindgen]
@@ -568,17 +563,18 @@ fn type_ref(kind: &KindValue, known: &HashSet<&str>) -> TypeRef {
     }
 }
 
+/// A frozen signature type is a plain string: `u64`, `Message`, `Message[]`.
+/// The only distinction the UI needs is "a type declared in this project"
+/// (render its fields) vs. "anything else" (one scalar input) — and the
+/// grammar reserves the primitive keywords, so a declared name can never
+/// collide with `u64` / `string` / …. That makes `known` (built from the IR)
+/// the single source of truth; there is no primitive-name list to keep in
+/// sync with `comline-core`.
 fn name_ref(n: &str, known: &HashSet<&str>) -> TypeRef {
-    if let Some(elem) = n.strip_suffix("[]") {
-        return TypeRef::Array { of: Box::new(name_ref(elem, known)) };
-    }
-    if PRIM_NAMES.contains(&n) {
-        TypeRef::Prim { name: n.to_string() }
-    } else if known.contains(n) {
-        TypeRef::Ref { name: n.to_string() }
-    } else {
-        // an unresolved import or otherwise unknown name — an opaque scalar
-        TypeRef::Prim { name: n.to_string() }
+    match n.strip_suffix("[]") {
+        Some(elem) => TypeRef::Array { of: Box::new(name_ref(elem, known)) },
+        None if known.contains(n) => TypeRef::Ref { name: n.to_string() },
+        None => TypeRef::Prim { name: n.to_string() },
     }
 }
 
