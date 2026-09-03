@@ -11,7 +11,7 @@
     "test": "tsc -p tsconfig.test.json && node --import tsx --test \"src/sim/**/*.test.ts\""
   },
   "dependencies": {
-    "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#feat/prepare-builds-scripted",
+    "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#c3ac42f520a3fca82e996d4b57c1036f9b0eb947",
     "@codemirror/autocomplete": "^6.18.0",
     "@codemirror/commands": "^6.7.0",
     "@codemirror/lang-javascript": "^6.2.5",
