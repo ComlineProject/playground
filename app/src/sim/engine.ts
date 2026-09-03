@@ -6,6 +6,7 @@
 /// leaves the others untouched.
 
 import { BEHAVIORS } from "./behavior.ts";
+import { RealClock, type Clock } from "./clock.ts";
 import {
   GenericClient,
   GenericDispatch,
@@ -16,6 +17,7 @@ import {
   type SimOutcome,
 } from "./generic.ts";
 import { instance, type Connection, type Session } from "./model.ts";
+import { mulberry32, type Rng } from "./rng.ts";
 import {
   Client,
   DatagramFraming,
@@ -63,8 +65,10 @@ const framingFor = (name: "datagram" | "jsonrpc"): (() => Framing) =>
 export async function connect(
   session: Session,
   conn: Connection,
-  opts: { forward?: ForwardFn } = {},
+  opts: { forward?: ForwardFn; clock?: Clock; rng?: Rng } = {},
 ): Promise<LiveConnection> {
+  const clock = opts.clock ?? new RealClock();
+  const rng = opts.rng ?? Math.random;
   const client = instance(session, conn.clientId);
   const server = instance(session, conn.serverId);
   if (!client || !server) throw new Error("connect: unknown instance");
@@ -87,7 +91,12 @@ export async function connect(
   };
   for (const fn of protocol.functions) behaviors[fn.name] = buildBehavior(fn.name);
 
-  const w = wire(client.name, server.name, conn.faults, session.latencyMs);
+  const w = wire(client.name, server.name, {
+    faults: conn.faults,
+    latencyMs: session.latencyMs,
+    clock,
+    rng,
+  });
   const base = {
     connId: conn.id,
     tap: w.tap,
@@ -100,7 +109,7 @@ export async function connect(
   };
 
   const rpcServer = new Server(
-    new GenericDispatch(protocol, behaviors, opts.forward),
+    new GenericDispatch(protocol, behaviors, opts.forward, clock),
     codec,
     makeFraming(),
   );
@@ -114,6 +123,7 @@ export async function connect(
       await Client.connect(w.a, codec, handshake(client.irHash), makeFraming()),
       protocol,
       session.callTimeoutMs,
+      clock,
     );
   } catch (e) {
     w.close();
@@ -148,6 +158,9 @@ export class Wires {
   private live = new Map<string, LiveConnection>();
   /** Connections currently mid-forward — re-entering one is a cycle. */
   private forwarding = new Set<string>();
+  /** The clock every wire schedules its delays on (default real time). */
+  clock: Clock = new RealClock();
+  private rng: Rng = Math.random;
 
   /** Relay a call onto another live wire, for a `Forward` behaviour. */
   private forwardVia: ForwardFn = async (viaConnId, targetFn, params): Promise<SimOutcome> => {
@@ -179,13 +192,18 @@ export class Wires {
     }
     for (const conn of session.connections) {
       if (this.live.has(conn.id)) continue;
-      this.live.set(conn.id, await connect(session, conn, { forward: this.forwardVia }));
+      this.live.set(
+        conn.id,
+        await connect(session, conn, { forward: this.forwardVia, clock: this.clock, rng: this.rng }),
+      );
     }
   }
 
-  /** Close all and re-open from scratch. */
+  /** Close all and re-open from scratch, re-seeding the fault RNG so a stepped
+   *  run from `session.seed` is reproducible. */
   async rebuild(session: Session): Promise<void> {
     this.closeAll();
+    this.rng = mulberry32(session.seed);
     await this.sync(session);
   }
 

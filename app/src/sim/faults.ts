@@ -3,6 +3,8 @@
 /// so tweaking a control in the inspector takes effect on the next frame with
 /// no reconnect.
 
+import type { Rng } from "./rng.ts";
+
 export type FaultDir = "requests" | "responses" | "both";
 
 export interface FaultSpec {
@@ -50,10 +52,10 @@ export function faultAppliesTo(f: FaultSpec, dir: "request" | "response"): boole
 
 /** A copy of `bytes` with one byte in its back half flipped — enough to make the
  *  body fail to decode without mangling the frame header. */
-export function corruptBytes(bytes: Uint8Array): Uint8Array {
+export function corruptBytes(bytes: Uint8Array, rng: Rng = Math.random): Uint8Array {
   const out = bytes.slice();
   if (out.length === 0) return out;
-  const i = Math.floor(out.length / 2 + Math.random() * (out.length / 2));
+  const i = Math.floor(out.length / 2 + rng() * (out.length / 2));
   out[Math.min(i, out.length - 1)] ^= 0xff;
   return out;
 }

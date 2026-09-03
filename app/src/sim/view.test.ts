@@ -622,3 +622,58 @@ test("2c — the fault inspector drops responses: the edge goes faulty and the c
   assert.ok(dropped, "the dropped response is shown in the frame log");
   sim.destroy();
 });
+
+test("2d — stepped clock: a delayed reply lands only after the step button is pressed", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+  const nodes = [...sim.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  const server = nodes.find((n) => n.classList.contains("role-server"))!;
+  const client = nodes.find((n) => n.classList.contains("role-client"))!;
+
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+
+  // switch the clock to stepped
+  pick(sim.el.querySelector(".clock-mode") as HTMLSelectElement, "stepped");
+  await tick();
+
+  // 300 ms delay on the response
+  fire(sim.el.querySelector(".sim-wire line")!, "click");
+  pick(sim.el.querySelector(".fault-ctls select") as HTMLSelectElement, "responses");
+  const nums = [...sim.el.querySelectorAll('.fault-ctls input[type="number"]')] as HTMLInputElement[];
+  nums[0].value = "300";
+  fire(nums[0], "change");
+  nums[1].value = "300";
+  fire(nums[1], "change");
+
+  // call — it should hang while the clock is paused
+  fire(client, "click");
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+    "click",
+  );
+  await tick(40);
+  const out = () => sim.el.querySelector(".call-out")!.textContent ?? "";
+  assert.doesNotMatch(out(), /"body": "HI"/, "nothing lands while paused");
+
+  // step the clock — the queued reply fires
+  const stepBtn = [...sim.el.querySelectorAll(".clock-btn")].find(
+    (b) => b.textContent === "⏭",
+  ) as HTMLButtonElement;
+  assert.ok(stepBtn && !stepBtn.disabled, "the step button is offered with a timer queued");
+  fire(stepBtn, "click");
+  await tick(40);
+  assert.match(out(), /"body": "HI"/, "the reply lands once time is stepped past the delay");
+
+  sim.destroy();
+});

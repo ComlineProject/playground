@@ -3,9 +3,10 @@
 /// instances, an inspector (instance facts, per-function behaviours,
 /// per-connection controls, and — for a connected client — the call form), and
 /// the merged frame list. Phase 2: many connections (2a), a node hosting
-/// several instances — a gateway (2b), an unreliable wire per connection (2c).
+/// several instances — a gateway (2b), an unreliable wire per connection (2c), a virtual clock (2d).
 
 import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
+import { RealClock, SteppedClock, type Clock } from "../clock.ts";
 import { Wires } from "../engine.ts";
 import { faultsActive } from "../faults.ts";
 import { SimRemoteError } from "../generic.ts";
@@ -45,6 +46,7 @@ export interface SimView {
 export function createSim(): SimView {
   let session: Session | null = null;
   const wires = new Wires();
+  let clock: Clock = new RealClock();
   let selectedId: string | null = null; // selected instance
   let selectedConnId: string | null = null; // selected connection (edge)
   let callForm: ArgsForm | null = null;
@@ -415,6 +417,29 @@ export function createSim(): SimView {
     flog.setSources(logSources());
     renderCanvas();
     renderInspector();
+  }
+
+  /** The clock / seed strip in the frame-log header. */
+  function clockBar() {
+    return {
+      mode: session?.clockMode ?? ("real" as const),
+      seed: session?.seed ?? 1,
+      clock: clock instanceof SteppedClock ? clock : null,
+      onMode: (mode: "real" | "stepped") => {
+        if (!session) return;
+        if (clock instanceof SteppedClock) clock.pause();
+        session.clockMode = mode;
+        clock = mode === "stepped" ? new SteppedClock() : new RealClock();
+        wires.clock = clock;
+        flog.setClockBar(clockBar());
+        void rebuildWires();
+      },
+      onSeed: (seed: number) => {
+        if (!session) return;
+        session.seed = seed;
+        void rebuildWires();
+      },
+    };
   }
 
   function disconnect(connId: string) {
@@ -923,11 +948,17 @@ export function createSim(): SimView {
       if (selectedConnId && !session.connections.some((c) => c.id === selectedConnId)) {
         selectedConnId = null;
       }
+      if (session.clockMode === "stepped" && !(clock instanceof SteppedClock)) {
+        clock = new SteppedClock();
+      }
+      wires.clock = clock;
+      flog.setClockBar(clockBar());
       renderPalette();
       void rebuildWires(); // re-handshake every wire against the new shape
     },
     destroy() {
       window.removeEventListener("resize", onResize);
+      if (clock instanceof SteppedClock) clock.pause();
       wires.closeAll();
     },
   };
