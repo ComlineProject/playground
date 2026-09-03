@@ -18,14 +18,17 @@ wasm/     comline-playground-wasm — the editor's Rust crate, wasm-bindgen surf
           deps: comline-core, comline-codegen, comline-codegen-rust,
                 comline-codegen-typescript, comline-language-server (git rev)
 sim-wasm/ a thin wrapper that re-exports ComlineProject/simulator's `Sim`
-          surface (git rev). `npm run sim-wasm` builds it lean; the scripted
-          build (`sim-wasm:script`) is lazy-loaded by the UI.
+          surface (git rev). `npm run sim-wasm` builds it lean (~520 KB);
+          `npm run sim-wasm:script` adds the Rhai `script` behaviour (~2.1 MB),
+          a separate chunk the simulate view fetches only when a `script`
+          behaviour is picked.
 app/      a Vite site: a CodeMirror 6 editor (highlighting / diagnostics /
           hover / autocomplete all from the editor WASM's LSP, in a Web
           Worker), plus the **simulate** view — a thin canvas / inspector /
           frame-log over the sim WASM. `app/src/sim/` is that view; the engine
           it drives lives in ComlineProject/simulator.
-.github/workflows/deploy.yml   build both WASMs → build site → deploy to Pages
+.github/workflows/deploy.yml   build the WASMs (editor, sim, scripted sim)
+                               → build site → deploy to Pages
 ```
 
 ## Develop
@@ -33,10 +36,14 @@ app/      a Vite site: a CodeMirror 6 editor (highlighting / diagnostics /
 ```sh
 cd app
 npm install
-npm run dev        # runs wasm-pack, then Vite
+npm run dev              # editor + lean sim WASM, then Vite
+npm run sim-wasm:script  # once, if you want to exercise `script` behaviours
 ```
 
-Requires a Rust toolchain with the `wasm32-unknown-unknown` target and
+`npm run dev` skips the scripted sim WASM (it is slow to build and rarely
+touched); without it, picking a `script` behaviour just shows an inspector
+notice. `npm run build` *does* need it — run `npm run sim-wasm:script` first, as
+CI does. Requires a Rust toolchain with the `wasm32-unknown-unknown` target and
 [`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
 
 ## Deploy
