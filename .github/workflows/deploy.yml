@@ -32,7 +32,7 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin
             wasm/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'app/package-lock.json') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'app/yarn.lock') }}
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -45,21 +45,22 @@ jobs:
         with:
           node-version: 22
 
-      # `npm install` pulls `comline-simulator` (the sim engine) as a git
-      # dependency and builds its WASM in `prepare` — lean `pkg/` + scripted
+      # `yarn install` pulls `comline-simulator` (the sim engine) as a git
+      # dependency and builds its WASM in `prepack` — lean `pkg/` + scripted
       # `pkg-script/`. The runner has cargo + wasm-opt; the cargo cache above
-      # keeps the one-time wasm-bindgen-cli build.
+      # keeps the one-time wasm-bindgen-cli build. Yarn is the runner's 1.x,
+      # which delegates to the committed `.yarn/releases/` (Yarn 4).
       - name: Install
         working-directory: app
-        run: npm install
+        run: yarn install
 
       - name: Test (simulate view)
         working-directory: app
-        run: npm test
+        run: yarn test
 
       - name: Build site
         working-directory: app
-        run: npm run build
+        run: yarn build
 
       - uses: actions/upload-pages-artifact@v3
         with:
