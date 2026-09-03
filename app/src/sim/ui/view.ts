@@ -417,8 +417,7 @@ export function createSim(opts: SimOpts = {}): SimView {
 
   function startConnectDrag(e: PointerEvent, from: ModelInstance) {
     hoverId = null;
-    const fromRow = nodeEl(from.id);
-    const a = fromRow ? center(fromRow) : { x: 0, y: 0 };
+    const a = portAnchor(from.id);
     const temp = document.createElementNS(SVGNS, "line");
     temp.setAttribute("class", "wire-drag");
     for (const [k, v] of [
@@ -471,11 +470,9 @@ export function createSim(opts: SimOpts = {}): SimView {
     }
     if (!model || !sim) return;
     for (const conn of model.connections) {
-      const c = nodeEl(conn.clientId);
-      const s = nodeEl(conn.serverId);
-      if (!c || !s) continue;
-      const a = center(c);
-      const b = center(s);
+      if (!nodeEl(conn.clientId) || !nodeEl(conn.serverId)) continue;
+      const a = portAnchor(conn.clientId);
+      const b = portAnchor(conn.serverId);
       const refused = !!sim.connection_error(conn.id) || sim.connection_dead(conn.id);
       let cls = refused ? "wire-refused" : "wire-live";
       if (!refused && faultsActive(conn.faults)) cls = "wire-faulty";
@@ -495,16 +492,19 @@ export function createSim(opts: SimOpts = {}): SimView {
     }
   }
 
-  function center(elm: HTMLElement) {
-    let x = elm.offsetWidth / 2;
-    let y = elm.offsetHeight / 2;
-    let e: HTMLElement | null = elm;
-    while (e && e !== canvasEl) {
-      x += e.offsetLeft;
-      y += e.offsetTop;
-      e = e.offsetParent as HTMLElement | null;
-    }
-    return { x, y };
+  /** Where a wire attaches for an instance: the centre of its `.node-port` dot
+   *  (or the row itself in the embed view, which has no port), in the same
+   *  canvas coordinate space `canvasPoint` produces. */
+  function portAnchor(instanceId: string): { x: number; y: number } {
+    const row = nodeEl(instanceId);
+    const el = row?.querySelector<HTMLElement>(".node-port") ?? row;
+    if (!el) return { x: 0, y: 0 };
+    const r = el.getBoundingClientRect();
+    const cr = canvasEl.getBoundingClientRect();
+    return {
+      x: r.left + r.width / 2 - cr.left + canvasEl.scrollLeft,
+      y: r.top + r.height / 2 - cr.top + canvasEl.scrollTop,
+    };
   }
 
   // ── frame-log sources ────────────────────────────────────────────────
