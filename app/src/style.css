@@ -986,12 +986,35 @@ label.clock-btn {
   --frame-grid-conn: 7rem 2rem 10rem 5rem 1fr 4.5rem 3.5rem;
 }
 
-.sim-frames-cols {
+.sim-frames-cols,
+details.frame-row > summary {
   display: grid;
   grid-template-columns: var(--frame-grid);
-  gap: 0.5rem;
   align-items: baseline;
-  padding: 0.3rem 0.4rem;
+}
+.sim-frames-cols.has-conn,
+details.frame-row.has-conn > summary {
+  grid-template-columns: var(--frame-grid-conn);
+}
+.sim-frames-cols:not(.has-conn) .frame-conn {
+  display: none;
+}
+/* column rules — a border on every cell but the last makes it read as a table */
+.sim-frames-cols > span,
+details.frame-row > summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.22rem 0.5rem;
+  border-right: 1px solid var(--border);
+}
+.sim-frames-cols > span:last-child,
+details.frame-row > summary > span:last-child {
+  border-right: none;
+}
+
+.sim-frames-cols {
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -999,34 +1022,17 @@ label.clock-btn {
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
 }
-.sim-frames-cols.has-conn {
-  grid-template-columns: var(--frame-grid-conn);
-}
-.sim-frames-cols:not(.has-conn) .frame-conn {
-  display: none;
-}
-.sim-frames-cols > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .frame-row {
   border-bottom: 1px solid var(--border);
   font-size: 0.72rem;
 }
 details.frame-row > summary {
-  display: grid;
-  grid-template-columns: var(--frame-grid);
-  gap: 0.5rem;
-  align-items: baseline;
-  padding: 0.2rem 0.4rem;
   cursor: pointer;
   list-style: none;
 }
-details.frame-row.has-conn > summary {
-  grid-template-columns: var(--frame-grid-conn);
+details.frame-row > summary:hover {
+  background: #ffffff08;
 }
 .frame-conn {
   color: var(--accent);
@@ -1038,12 +1044,6 @@ details.frame-row.has-conn > summary {
 }
 details.frame-row > summary::-webkit-details-marker {
   display: none;
-}
-details.frame-row > summary > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .frame-row .frame-seq {
   color: var(--muted);
