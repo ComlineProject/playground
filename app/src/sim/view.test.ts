@@ -568,3 +568,57 @@ test("2b — a box is named `Machine N` and its header renames on double-click",
   assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /box · gateway/i);
   sim.destroy();
 });
+
+test("2c — the fault inspector drops responses: the edge goes faulty and the call times out", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+  const nodes = [...sim.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  const server = nodes.find((n) => n.classList.contains("role-server"))!;
+  const client = nodes.find((n) => n.classList.contains("role-client"))!;
+
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  // shorten the client's wait so the timeout fires fast
+  const timeout = [...sim.el.querySelectorAll(".sim-inspector input[type=number]")].find((i) =>
+    (i as HTMLInputElement).title.includes("timeout"),
+  ) as HTMLInputElement;
+  timeout.value = "120";
+  fire(timeout, "change");
+  await tick();
+
+  // select the connection edge, drop every response
+  fire(sim.el.querySelector(".sim-wire line")!, "click");
+  const applyTo = sim.el.querySelector(".fault-ctls select") as HTMLSelectElement;
+  pick(applyTo, "responses");
+  const dropSlider = sim.el.querySelector('.fault-ctls input[type="range"]') as HTMLInputElement;
+  dropSlider.value = "100";
+  fire(dropSlider, "input");
+  assert.ok(sim.el.querySelector(".sim-wire .wire-faulty"), "the edge shows faulty");
+
+  // now call from the client and watch it time out
+  fire(client, "click");
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+    "click",
+  );
+  await tick(220);
+  assert.match(sim.el.querySelector(".call-out")!.textContent!, /timeout/i);
+
+  // a dropped response frame is greyed / labelled in the log
+  const dropped = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")].find((r) =>
+    /dropped/.test(r.querySelector(".frame-kind")?.textContent ?? ""),
+  );
+  assert.ok(dropped, "the dropped response is shown in the frame log");
+  sim.destroy();
+});

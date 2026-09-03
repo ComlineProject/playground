@@ -47,16 +47,26 @@ const nameOf = (h: bigint) => NAME_BY_HASH.get(h) ?? `0x${h.toString(16)}`;
 const framingFor = (name: "datagram" | "jsonrpc"): Framing =>
   name === "jsonrpc" ? new JsonRpcFraming() : new DatagramFraming();
 
+let lastDecodeFailed = false;
+
 function jsonOf(bytes: Uint8Array): unknown {
   if (bytes.length === 0) return null;
   try {
     return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
-    return `<${bytes.length} bytes>`;
+    lastDecodeFailed = true;
+    return `<${bytes.length} undecodable bytes>`;
   }
 }
 
 export function describeFrame(frame: Frame, ctx: DecodeCtx): FrameDetail {
+  lastDecodeFailed = false;
+  const detail = decode(frame, ctx);
+  if (lastDecodeFailed && detail.kind !== "handshake") detail.framing = "undecodable";
+  return detail;
+}
+
+function decode(frame: Frame, ctx: DecodeCtx): FrameDetail {
   const bytes = frame.bytes;
   const framingName = ctx.framing === "jsonrpc" ? "jsonrpc-2.0" : FRAMING_DATAGRAM;
 

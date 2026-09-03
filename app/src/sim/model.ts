@@ -6,6 +6,7 @@
 /// protocol and a server of another.
 
 import { BEHAVIORS, defaultKindFor, type BehaviorKind } from "./behavior.ts";
+import { noFaults, type FaultSpec } from "./faults.ts";
 import { findProtocol, type ProjectShape } from "./shape.ts";
 
 export type Role = "server" | "client";
@@ -47,6 +48,9 @@ export interface Connection {
   id: string;
   clientId: string;
   serverId: string;
+  /** The unreliable-wire spec for this connection. Mutated in place by the
+   *  inspector; the engine hands the same object to both transports. */
+  faults: FaultSpec;
 }
 
 export interface Session {
@@ -56,6 +60,8 @@ export interface Session {
   connections: Connection[];
   /** Fixed per-frame delivery delay for every wire, ms. */
   latencyMs: number;
+  /** How long a client waits for a reply before `RuntimeError("timeout")`. */
+  callTimeoutMs: number;
 }
 
 let counter = 0;
@@ -66,7 +72,7 @@ let nodeCounter = 0;
 const nextNodeId = () => `n${++nodeCounter}`;
 
 export function emptySession(shape: ProjectShape): Session {
-  return { shape, nodes: [], instances: [], connections: [], latencyMs: 0 };
+  return { shape, nodes: [], instances: [], connections: [], latencyMs: 0, callTimeoutMs: 3000 };
 }
 
 /** Seed a server's per-function behaviour map from the protocol shape. */
@@ -183,7 +189,7 @@ export function addConnection(session: Session, clientId: string, serverId: stri
   if (session.connections.some((x) => x.clientId === clientId && x.serverId === serverId)) {
     throw new Error(`connect: ${c.name} ↔ ${s.name} already connected`);
   }
-  const conn = { id: nextConnId(), clientId, serverId };
+  const conn: Connection = { id: nextConnId(), clientId, serverId, faults: noFaults() };
   session.connections.push(conn);
   return conn;
 }

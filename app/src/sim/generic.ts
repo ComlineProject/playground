@@ -53,15 +53,29 @@ export type BehaviorMap = Record<string, Behavior>;
 
 /// The consumer side. `call(fnName, params)` frames the call, waits for the
 /// response, and either returns the decoded value or throws `SimRemoteError`.
+/// The vendored `Client.call` blocks forever on a lost reply; `timeoutMs`
+/// (`0` = wait forever) is the call window that turns that into a
+/// `RuntimeError("timeout")`. A timed-out call leaves a `recv()` parked on the
+/// vendored `Client`, so the correlation is desynced — the client is `dead`
+/// after that and the connection must be reopened.
 export class GenericClient {
+  private timedOut = false;
+
   constructor(
     private readonly client: Client,
     private readonly proto: ProtocolShape,
+    private readonly timeoutMs = 0,
   ) {}
+
+  /** True once a call has timed out — every later call fails fast until reconnect. */
+  get dead(): boolean {
+    return this.timedOut;
+  }
 
   async call(fnName: string, params: unknown): Promise<unknown> {
     const fn = this.proto.functions.find((f) => f.name === fnName);
     if (!fn) throw new Error(`${this.proto.name} has no function \`${fnName}\``);
+    if (this.timedOut) throw RuntimeError.timeout();
     const address: Kind & { name: string } = { id: fn.index, name: fn.name };
 
     if (fn.oneway) {
@@ -69,7 +83,7 @@ export class GenericClient {
       return undefined;
     }
 
-    const env = await this.client.call(address, params);
+    const env = await this.withTimeout(this.client.call(address, params));
     if ("ok" in env) return this.client.codec.decode(env.ok);
     const thrown = fn.throws.find((t) => t.ordinal === env.err.id);
     throw new SimRemoteError(
@@ -77,6 +91,20 @@ export class GenericClient {
       thrown?.name,
       env.err.body.length ? this.client.codec.decode(env.err.body) : null,
     );
+  }
+
+  private withTimeout<T>(p: Promise<T>): Promise<T> {
+    if (this.timeoutMs <= 0) return p;
+    return new Promise<T>((resolve, reject) => {
+      const t = setTimeout(() => {
+        this.timedOut = true;
+        reject(RuntimeError.timeout());
+      }, this.timeoutMs);
+      p.then(
+        (v) => (clearTimeout(t), resolve(v)),
+        (e) => (clearTimeout(t), reject(e)),
+      );
+    });
   }
 }
 

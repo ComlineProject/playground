@@ -40,6 +40,9 @@ export interface LiveConnection {
   clientName: string;
   serverName: string;
   framing: "datagram" | "jsonrpc";
+  /** True once a call has timed out — the client is desynced and the
+   *  connection must be reopened (`Wires.rebuild`). */
+  dead(): boolean;
   /** Invoke a function from the client side. Rejects if `error` is set. */
   call(fnName: string, params: unknown): Promise<unknown>;
   /** Swap a server behaviour; takes effect on the next call. */
@@ -84,7 +87,7 @@ export async function connect(
   };
   for (const fn of protocol.functions) behaviors[fn.name] = buildBehavior(fn.name);
 
-  const w = wire(client.name, server.name, session.latencyMs);
+  const w = wire(client.name, server.name, conn.faults, session.latencyMs);
   const base = {
     connId: conn.id,
     tap: w.tap,
@@ -110,6 +113,7 @@ export async function connect(
     rpcClient = new GenericClient(
       await Client.connect(w.a, codec, handshake(client.irHash), makeFraming()),
       protocol,
+      session.callTimeoutMs,
     );
   } catch (e) {
     w.close();
@@ -117,6 +121,7 @@ export async function connect(
     return {
       ...base,
       error: kind,
+      dead: () => false,
       call: () => Promise.reject(new Error(`connection refused · ${kind}`)),
       setBehavior: () => {},
     };
@@ -125,6 +130,7 @@ export async function connect(
   return {
     ...base,
     error: null,
+    dead: () => rpcClient.dead,
     call: (fnName, params) => rpcClient.call(fnName, params),
     setBehavior: (fnName, setting) => {
       const fn = protocol.functions.find((f) => f.name === fnName);
