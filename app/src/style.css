@@ -883,7 +883,7 @@ body.mode-simulate #gen-controls {
 .sim-frames-list {
   flex: 1;
   overflow: auto;
-  padding: 0 0.4rem 0.4rem;
+  padding-bottom: 0.4rem;
   font-size: 0.72rem;
 }
 .sim-frames-head {
@@ -982,8 +982,9 @@ label.clock-btn {
    grid's own content and drift (the header text ≠ the row text, and the header
    font is smaller). */
 .sim-frames {
-  --frame-grid: 2rem 10rem 5rem 1fr 4.5rem 3.5rem;
-  --frame-grid-conn: 7rem 2rem 10rem 5rem 1fr 4.5rem 3.5rem;
+  /* tracks include each cell's 1rem of horizontal padding (border-box) */
+  --frame-grid: 3rem 10rem 5.5rem 1fr 5rem 4rem;
+  --frame-grid-conn: 8rem 3rem 10rem 5.5rem 1fr 5rem 4rem;
 }
 
 .sim-frames-cols,
