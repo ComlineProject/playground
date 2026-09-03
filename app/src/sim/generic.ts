@@ -3,6 +3,7 @@
 /// compiled schema can be wired up without code generation. The drift guard in
 /// `wire.test.ts` proves the frames match the generator's.
 
+import type { Clock } from "./clock.ts";
 import type { Client, Codec, Dispatch, Kind, Reply } from "./runtime/index.ts";
 import { resolveKind, RuntimeError } from "./runtime/index.ts";
 import type { FnShape, ProtocolShape } from "./shape.ts";
@@ -41,6 +42,9 @@ export interface BehaviorCtx {
   proto: ProtocolShape;
   /** Set by the engine; lets a `Forward` behaviour relay to another server. */
   forward?: ForwardFn;
+  /** Set by the engine; a `Delay then reply` behaviour sleeps on it so a
+   *  stepped clock can pause it. */
+  clock?: Clock;
 }
 
 /** What a server instance does for one function when dispatched. */
@@ -65,6 +69,7 @@ export class GenericClient {
     private readonly client: Client,
     private readonly proto: ProtocolShape,
     private readonly timeoutMs = 0,
+    private readonly clock?: Clock,
   ) {}
 
   /** True once a call has timed out — every later call fails fast until reconnect. */
@@ -95,14 +100,20 @@ export class GenericClient {
 
   private withTimeout<T>(p: Promise<T>): Promise<T> {
     if (this.timeoutMs <= 0) return p;
+    const schedule =
+      this.clock?.after.bind(this.clock) ??
+      ((ms: number, fn: () => void) => {
+        const t = setTimeout(fn, ms);
+        return () => clearTimeout(t);
+      });
     return new Promise<T>((resolve, reject) => {
-      const t = setTimeout(() => {
+      const cancel = schedule(this.timeoutMs, () => {
         this.timedOut = true;
         reject(RuntimeError.timeout());
-      }, this.timeoutMs);
+      });
       p.then(
-        (v) => (clearTimeout(t), resolve(v)),
-        (e) => (clearTimeout(t), reject(e)),
+        (v) => (cancel(), resolve(v)),
+        (e) => (cancel(), reject(e)),
       );
     });
   }
@@ -116,6 +127,7 @@ export class GenericDispatch implements Dispatch {
     private readonly proto: ProtocolShape,
     private readonly behaviors: BehaviorMap,
     private readonly forward?: ForwardFn,
+    private readonly clock?: Clock,
   ) {}
 
   calls(): readonly string[] {
@@ -134,6 +146,7 @@ export class GenericDispatch implements Dispatch {
       fn,
       proto: this.proto,
       forward: this.forward,
+      clock: this.clock,
     });
 
     switch (outcome.kind) {

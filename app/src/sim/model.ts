@@ -62,6 +62,10 @@ export interface Session {
   latencyMs: number;
   /** How long a client waits for a reply before `RuntimeError("timeout")`. */
   callTimeoutMs: number;
+  /** Seeds the fault RNG — a stepped run with a fixed seed is reproducible. */
+  seed: number;
+  /** `real` = wall-clock (default); `stepped` = the sim only advances on step / play. */
+  clockMode: "real" | "stepped";
 }
 
 let counter = 0;
@@ -72,7 +76,16 @@ let nodeCounter = 0;
 const nextNodeId = () => `n${++nodeCounter}`;
 
 export function emptySession(shape: ProjectShape): Session {
-  return { shape, nodes: [], instances: [], connections: [], latencyMs: 0, callTimeoutMs: 3000 };
+  return {
+    shape,
+    nodes: [],
+    instances: [],
+    connections: [],
+    latencyMs: 0,
+    callTimeoutMs: 3000,
+    seed: 1,
+    clockMode: "real",
+  };
 }
 
 /** Seed a server's per-function behaviour map from the protocol shape. */

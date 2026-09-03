@@ -903,6 +903,50 @@ body.mode-simulate #gen-controls {
   color: var(--fg);
   border-color: var(--accent);
 }
+
+/* clock / seed strip in the frames header */
+.clock-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-left: 0.4rem;
+  border-left: 1px solid var(--border);
+}
+.clock-bar select,
+.clock-bar input {
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.2rem;
+}
+.clock-seed {
+  width: 3rem;
+}
+.clock-btn {
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  cursor: pointer;
+}
+.clock-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.clock-queued {
+  font-size: 0.6rem;
+  color: var(--warn);
+  white-space: nowrap;
+}
 .sim-wire .wire-refused {
   stroke: var(--err);
   stroke-dasharray: 3 3;

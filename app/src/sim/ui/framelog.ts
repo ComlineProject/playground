@@ -8,6 +8,7 @@
 /// every connection is filterable from the header. A refused connection gets
 /// its own row.
 
+import type { SteppedClock } from "../clock.ts";
 import { describeFrame, toHex, type DecodeCtx } from "../framedecode.ts";
 import type { Frame, Tap } from "../transport.ts";
 
@@ -20,10 +21,21 @@ export interface LogSource {
   error?: string | null;
 }
 
+export interface ClockBar {
+  mode: "real" | "stepped";
+  seed: number;
+  /** Present only in stepped mode. */
+  clock: SteppedClock | null;
+  onMode(mode: "real" | "stepped"): void;
+  onSeed(seed: number): void;
+}
+
 export interface FrameLog {
   el: HTMLElement;
   /** Replace the set of connections being logged. Clears and re-renders. */
   setSources(sources: LogSource[]): void;
+  /** Render the clock / seed controls in the header. */
+  setClockBar(bar: ClockBar): void;
 }
 
 const IDLE_MS = 2000;
@@ -58,10 +70,14 @@ export function frameLog(): FrameLog {
   const connFilters = document.createElement("div");
   connFilters.className = "frame-filters conn-filters";
 
+  const clockBar = document.createElement("div");
+  clockBar.className = "clock-bar";
+  let clockUnsub: (() => void) | null = null;
+
   const clear = document.createElement("button");
   clear.className = "icon-btn";
   clear.textContent = "clear";
-  head.append(title, kindFilters, connFilters, clear);
+  head.append(title, kindFilters, connFilters, clockBar, clear);
 
   const list = document.createElement("div");
   list.className = "sim-frames-list";
@@ -232,6 +248,70 @@ export function frameLog(): FrameLog {
       for (const s of next) if (s.error) refusedRow(s.connId, s.error);
 
       for (const s of next) unsubs.push(s.tap.on((f) => addRow(s.connId, f)));
+    },
+    setClockBar(bar) {
+      clockUnsub?.();
+      clockUnsub = null;
+      clockBar.replaceChildren();
+
+      const mkBtn = (text: string, on: () => void) => {
+        const b = document.createElement("button");
+        b.className = "clock-btn";
+        b.textContent = text;
+        b.addEventListener("click", on);
+        return b;
+      };
+
+      const mode = document.createElement("select");
+      mode.className = "clock-mode";
+      for (const m of ["real", "stepped"] as const) {
+        const o = document.createElement("option");
+        o.value = m;
+        o.textContent = `⏱ ${m}`;
+        o.selected = m === bar.mode;
+        mode.append(o);
+      }
+      mode.addEventListener("change", () =>
+        bar.onMode((mode.value || "real") as "real" | "stepped"),
+      );
+      clockBar.append(mode);
+
+      const seed = document.createElement("input");
+      seed.type = "number";
+      seed.className = "clock-seed";
+      seed.value = String(bar.seed);
+      seed.title = "fault RNG seed — same seed, same run";
+      seed.addEventListener("change", () => bar.onSeed(Math.trunc(Number(seed.value) || 0)));
+      clockBar.append(seed);
+
+      const c = bar.clock;
+      if (!c) return;
+
+      const step = mkBtn("⏭", () => c.step());
+      const play = mkBtn(c.playing ? "⏸" : "▶", () => (c.playing ? c.pause() : c.play(speedOf())));
+      const speed = document.createElement("select");
+      speed.className = "clock-speed";
+      for (const s of ["1", "4", "16"]) {
+        const o = document.createElement("option");
+        o.value = s;
+        o.textContent = `${s}×`;
+        speed.append(o);
+      }
+      const speedOf = () => Number(speed.value) || 1;
+      speed.addEventListener("change", () => {
+        if (c.playing) c.play(speedOf());
+      });
+      const queued = document.createElement("span");
+      queued.className = "clock-queued mono";
+
+      const paint = () => {
+        play.textContent = c.playing ? "⏸" : "▶";
+        step.disabled = c.pending() === 0;
+        queued.textContent = c.pending() ? `${c.pending()} queued · t=${Math.round(c.now())}` : "";
+      };
+      paint();
+      clockUnsub = c.onChange(paint);
+      clockBar.append(step, play, speed, queued);
     },
   };
 }

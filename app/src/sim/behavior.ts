@@ -111,8 +111,9 @@ export const BEHAVIORS: Record<BehaviorKind, BehaviorSpec> = {
       value: fn.returns ? zeroValue(fn.returns, schema.types) : null,
     }),
     make: (config, fn) => ({
-      run: async () => {
-        await sleep(Number(config.ms) || 0);
+      run: async (ctx) => {
+        const ms = Number(config.ms) || 0;
+        await (ctx.clock ? ctx.clock.sleep(ms) : sleep(ms));
         return okOrNone(fn, config.value ?? null);
       },
     }),
