@@ -21,6 +21,10 @@ const { describe_project } = await import("../wasm/comline_playground_wasm.js");
 await initWasm(
   readFileSync(fileURLToPath(new URL("../wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
 );
+const initSim = (await import("../sim-wasm/comline_sim.js")).default;
+await initSim(
+  readFileSync(fileURLToPath(new URL("../sim-wasm/comline_sim_bg.wasm", import.meta.url))),
+);
 const { createSim } = await import("./ui/view.ts");
 import type { ProjectShape } from "./shape.ts";
 
@@ -317,54 +321,44 @@ test("polish — round-trip time shows on the reply, blank on the request", asyn
   sim.destroy();
 });
 
-test("polish — a long wall-clock gap inserts a filterable idle separator", async () => {
-  const realNow = performance.now.bind(performance);
-  let skew = 0;
-  performance.now = () => realNow() + skew;
-  try {
-    const sim = createSim();
-    document.body.append(sim.el);
-    sim.setShape(shape());
-    const { server, client } = place(sim);
+test("polish — a long gap in virtual time inserts a filterable idle separator", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
 
-    fire(server, "click");
-    const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
-    cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
-    fire(cfg, "change");
-    fire(client, "click");
-    pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
-    await tick();
-    pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-    const send = () =>
-      fire(
-        [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-        "click",
-      );
+  // a 5 s server-side delay puts the reply frame far ahead of the request
+  fire(server, "click");
+  pick(sim.el.querySelector(".behavior-kind") as HTMLSelectElement, "delay");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ ms: 5000, value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
 
-    send();
-    await tick();
-    skew += 5000; // five seconds pass before the next call
-    send();
-    await tick();
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+    "click",
+  );
+  await tick();
 
-    const idle = sim.el.querySelector(".sim-frames-list .frame-idle") as HTMLElement;
-    assert.ok(idle, "an idle separator was inserted");
-    assert.match(idle.textContent!, /5s idle/);
-    assert.equal(idle.dataset.kind, "idle");
+  const idle = sim.el.querySelector(".sim-frames-list .frame-idle") as HTMLElement;
+  assert.ok(idle, "an idle separator was inserted");
+  assert.match(idle.textContent!, /5s idle/);
+  assert.equal(idle.dataset.kind, "idle");
 
-    const idleFilter = [...sim.el.querySelectorAll(".frame-filter")].find(
-      (b) => b.textContent === "idle",
-    ) as HTMLButtonElement;
-    assert.ok(idleFilter, "the header has an `idle` filter");
-    fire(idleFilter, "click");
-    assert.ok(idle.hidden, "the idle filter hides the separator");
-    fire(idleFilter, "click");
-    assert.ok(!idle.hidden, "and toggling it back shows it");
+  const idleFilter = [...sim.el.querySelectorAll(".frame-filter")].find(
+    (b) => b.textContent === "idle",
+  ) as HTMLButtonElement;
+  assert.ok(idleFilter, "the header has an `idle` filter");
+  fire(idleFilter, "click");
+  assert.ok(idle.hidden, "the idle filter hides the separator");
+  fire(idleFilter, "click");
+  assert.ok(!idle.hidden, "and toggling it back shows it");
 
-    sim.destroy();
-  } finally {
-    performance.now = realNow;
-  }
+  sim.destroy();
 });
 
 test("2a — fan-out: one server, two clients, two connections; drop one, the other stays live", async () => {
@@ -666,13 +660,16 @@ test("2d — stepped clock: a delayed reply lands only after the step button is 
   const out = () => sim.el.querySelector(".call-out")!.textContent ?? "";
   assert.doesNotMatch(out(), /"body": "HI"/, "nothing lands while paused");
 
-  // step the clock — the queued reply fires
-  const stepBtn = [...sim.el.querySelectorAll(".clock-btn")].find(
-    (b) => b.textContent === "⏭",
-  ) as HTMLButtonElement;
-  assert.ok(stepBtn && !stepBtn.disabled, "the step button is offered with a timer queued");
-  fire(stepBtn, "click");
-  await tick(40);
+  const stepBtn = () =>
+    [...sim.el.querySelectorAll(".clock-btn")].find((b) => b.textContent === "⏭") as HTMLButtonElement;
+  assert.ok(stepBtn() && !stepBtn().disabled, "the step button is offered with a timer queued");
+
+  // step the clock forward — each event is one step (request delivery, then the
+  // 300 ms-delayed response); the reply lands once time passes the delay
+  for (let i = 0; i < 6 && !out().includes('"body": "HI"'); i++) {
+    fire(stepBtn(), "click");
+    await tick(20);
+  }
   assert.match(out(), /"body": "HI"/, "the reply lands once time is stepped past the delay");
 
   sim.destroy();
