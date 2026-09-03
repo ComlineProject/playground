@@ -730,3 +730,56 @@ test("2e — a serialized session restores its nodes, connections and live wires
   assert.match(restored.el.querySelector(".call-out")!.textContent!, /"body": "SHARED"/);
   restored.destroy();
 });
+
+test("2e — record a call through the UI, then replay it", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+  const nodes = [...sim.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  const server = nodes.find((n) => n.classList.contains("role-server"))!;
+  const client = nodes.find((n) => n.classList.contains("role-client"))!;
+
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "REC", seq: 4 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+
+  const clockBtn = (text: string) =>
+    [...sim.el.querySelectorAll(".clock-btn")].find((b) => b.textContent === text) as HTMLButtonElement;
+
+  // start recording via the header button
+  fire(clockBtn("● rec"), "click");
+  assert.ok(clockBtn("■ stop"), "the rec button flips to stop");
+
+  // send a call — captured
+  fire(client, "click");
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(
+    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+    "click",
+  );
+  await tick(30);
+  assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "REC"/);
+
+  // stop → a replay button appears
+  fire(clockBtn("■ stop"), "click");
+  const replayBtn = clockBtn("▷ replay");
+  assert.ok(replayBtn, "a replay button is offered once a recording exists");
+
+  // replay — the call re-runs; frames reappear on a fresh (stepped) engine
+  fire(replayBtn, "click");
+  await tick(60);
+  const nonHs = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")].filter(
+    (r) => (r as HTMLElement).dataset.kind !== "handshake",
+  );
+  assert.ok(nonHs.length >= 2, "the replayed call's request + response are in the log");
+  assert.ok(sim.el.querySelector(".sim-wire .wire-live"), "the wire is live after replay");
+  assert.equal((sim.el.querySelector(".clock-mode") as HTMLSelectElement).value, "stepped");
+  sim.destroy();
+});

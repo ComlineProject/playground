@@ -3,7 +3,7 @@
 /// instances, an inspector (instance facts, per-function behaviours,
 /// per-connection controls, and — for a connected client — the call form), and
 /// the merged frame list. Phase 2: many connections (2a), a node hosting
-/// several instances — a gateway (2b), an unreliable wire per connection (2c), a virtual clock (2d), a shareable session URL (2e).
+/// several instances — a gateway (2b), an unreliable wire per connection (2c), a virtual clock (2d), a shareable session URL + record a shareable session URL (2e). replay (2e).
 
 import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
 import { RealClock, SteppedClock, type Clock } from "../clock.ts";
@@ -29,6 +29,7 @@ import {
   type Role,
   type Session,
 } from "../model.ts";
+import { Recorder, replayRecording, type Recording } from "../record.ts";
 import { decodeSession, encodeSession } from "../session-codec.ts";
 import { findProtocol, type ProjectShape } from "../shape.ts";
 import type { LogSource } from "./framelog.ts";
@@ -44,6 +45,10 @@ export interface SimView {
   setShape(shape: ProjectShape, serialized?: string | null): void;
   /** The current session as a URL-fragment payload. */
   serialize(): string;
+  /** Start / stop capturing inputs; `stop` returns the recording. */
+  record(on: boolean): Recording | null;
+  /** Re-run a recording on a fresh stepped clock, into this view. */
+  replay(rec: Recording): Promise<void>;
   destroy(): void;
 }
 
@@ -51,9 +56,12 @@ export function createSim(): SimView {
   let session: Session | null = null;
   const wires = new Wires();
   let clock: Clock = new RealClock();
+  const recorder = new Recorder();
   let selectedId: string | null = null; // selected instance
   let selectedConnId: string | null = null; // selected connection (edge)
   let callForm: ArgsForm | null = null;
+
+  const capture = (e: Parameters<Recorder["capture"]>[0]) => recorder.capture(e, clock.now());
 
   const el = div("sim");
   const paletteEl = div("sim-col sim-palette");
@@ -455,7 +463,64 @@ export function createSim(): SimView {
           return frag;
         }
       },
+      recording: recorder.recording,
+      hasRecording: lastRecording !== null,
+      onRecord: (on: boolean) => {
+        if (on) {
+          if (session) recorder.start(session, clock.now());
+        } else {
+          lastRecording = recorder.stop();
+        }
+        flog.setClockBar(clockBar());
+      },
+      onReplay: () => {
+        if (lastRecording) void replayInView(lastRecording);
+      },
+      onExport: () => {
+        if (!lastRecording) return;
+        try {
+          const blob = new Blob([JSON.stringify(lastRecording, null, 2)], {
+            type: "application/json",
+          });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `sim-recording-${Date.now()}.json`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        } catch {
+          /* no blob URL support (tests) — silently no-op */
+        }
+      },
+      onImport: (json: string) => {
+        try {
+          const rec = JSON.parse(json) as Recording;
+          if (rec && rec.v === 1 && Array.isArray(rec.events)) {
+            lastRecording = rec;
+            void replayInView(rec);
+          }
+        } catch {
+          flashInspectorError("import: not a recording");
+        }
+      },
     };
+  }
+
+  let lastRecording: Recording | null = null;
+
+  async function replayInView(rec: Recording) {
+    if (!session) return;
+    const stepClock = new SteppedClock();
+    clock = stepClock;
+    wires.clock = stepClock;
+    const r = await replayRecording(rec, session.shape, { wires, clock: stepClock });
+    session = r.session;
+    selectedId = null;
+    selectedConnId = null;
+    flog.setClockBar(clockBar());
+    flog.setSources(logSources());
+    renderPalette();
+    renderCanvas();
+    renderInspector();
   }
 
   function disconnect(connId: string) {
@@ -692,6 +757,10 @@ export function createSim(): SimView {
   function faultControls(conn: Connection): HTMLElement {
     const wrap = div("fault-ctls");
     const f = conn.faults;
+    const touched = () => {
+      drawWires();
+      capture({ kind: "fault", connId: conn.id, faults: { ...f } });
+    };
 
     const pct = (label: string, get: () => number, set: (v: number) => void) => {
       const inp = document.createElement("input");
@@ -706,7 +775,7 @@ export function createSim(): SimView {
       inp.addEventListener("input", () => {
         set(Number(inp.value) / 100);
         out.textContent = `${inp.value}%`;
-        drawWires();
+        touched();
       });
       const r = div("insp-row");
       const l = document.createElement("span");
@@ -723,7 +792,7 @@ export function createSim(): SimView {
       inp.value = String(get());
       inp.addEventListener("change", () => {
         set(Math.max(0, Number(inp.value) || 0));
-        drawWires();
+        touched();
       });
       const r = div("insp-row");
       const l = document.createElement("span");
@@ -739,7 +808,7 @@ export function createSim(): SimView {
     }
     applyTo.addEventListener("change", () => {
       f.applyTo = selValue(applyTo) as typeof f.applyTo;
-      drawWires();
+      touched();
     });
 
     const partition = document.createElement("input");
@@ -747,7 +816,7 @@ export function createSim(): SimView {
     partition.checked = f.partition;
     partition.addEventListener("change", () => {
       f.partition = partition.checked;
-      drawWires();
+      touched();
     });
     const pRow = div("insp-row");
     const pl = document.createElement("span");
@@ -787,6 +856,7 @@ export function createSim(): SimView {
     wrap.append(head);
 
     const applyLive = () => {
+      capture({ kind: "behavior", instanceId: inst.id, fn: fnName, setting: inst.behaviors[fnName] });
       for (const lc of wires.forInstance(inst.id)) {
         if (!lc.error) lc.setBehavior(fnName, inst.behaviors[fnName]);
       }
@@ -915,8 +985,10 @@ export function createSim(): SimView {
         return;
       }
       out.textContent = "…";
+      const fnName = selValue(fnSel);
+      capture({ kind: "call", connId: lc.connId, fn: fnName, params });
       try {
-        const res = await lc.call(selValue(fnSel), params);
+        const res = await lc.call(fnName, params);
         out.textContent = res === undefined ? "(no reply)" : JSON.stringify(res, null, 2);
         out.classList.add("ok");
       } catch (e) {
@@ -982,6 +1054,20 @@ export function createSim(): SimView {
     },
     serialize() {
       return session ? encodeSession(session) : "";
+    },
+    record(on) {
+      if (on) {
+        if (session) recorder.start(session, clock.now());
+        flog.setClockBar(clockBar());
+        return null;
+      }
+      lastRecording = recorder.stop();
+      flog.setClockBar(clockBar());
+      return lastRecording;
+    },
+    async replay(rec) {
+      lastRecording = rec;
+      await replayInView(rec);
     },
     destroy() {
       window.removeEventListener("resize", onResize);
