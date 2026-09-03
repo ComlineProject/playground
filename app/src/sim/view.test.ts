@@ -21,9 +21,13 @@ const { describe_project } = await import("../wasm/comline_playground_wasm.js");
 await initWasm(
   readFileSync(fileURLToPath(new URL("../wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
 );
-const initSim = (await import("../sim-wasm/comline_sim.js")).default;
+const initSim = (await import("comline-simulator")).default;
 await initSim(
-  readFileSync(fileURLToPath(new URL("../sim-wasm/comline_sim_bg.wasm", import.meta.url))),
+  readFileSync(
+    fileURLToPath(
+      new URL("../../node_modules/comline-simulator/pkg/comline_simulator_bg.wasm", import.meta.url),
+    ),
+  ),
 );
 const { createSim } = await import("./ui/view.ts");
 import type { ProjectShape } from "./shape.ts";
@@ -783,17 +787,20 @@ test("2e — record a call through the UI, then replay it", async () => {
 
 // ── 2f — scripted behaviour (Rhai), lazy-loaded ──────────────────────
 const scriptedWasm = fileURLToPath(
-  new URL("../sim-wasm-script/comline_sim_script_bg.wasm", import.meta.url),
+  new URL(
+    "../../node_modules/comline-simulator/pkg-script/comline_simulator_bg.wasm",
+    import.meta.url,
+  ),
 );
 const loadScripted = async () => {
-  const m = await import("../sim-wasm-script/comline_sim_script.js");
+  const m = await import("comline-simulator/pkg-script/comline_simulator.js");
   await m.default(readFileSync(scriptedWasm));
   return { Sim: m.Sim };
 };
 
 test(
   "2f — picking `script` pulls the scripted wasm and runs a Rhai reply",
-  { skip: existsSync(scriptedWasm) ? false : "run `npm run sim-wasm:script` first" },
+  { skip: existsSync(scriptedWasm) ? false : "set COMLINE_SIMULATOR_SCRIPT=1 and reinstall" },
   async () => {
     const sim = createSim({ loadScripted });
     document.body.append(sim.el);

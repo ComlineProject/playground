@@ -1,8 +1,11 @@
-// `comline_sim_script.js` (in `app/src/sim-wasm-script/`) is a wasm-pack
-// artifact built on demand — by `npm run sim-wasm:script` and the deploy
-// workflow, not by `npm run dev`. It exports the same surface as the lean
-// `comline_sim.js`, just with the Rhai `script` behaviour compiled in. This
-// opaque ambient lets `tsc` resolve the lazy `import()` when the artifact (and
-// its generated `.d.ts`) is absent; callers cast the module to the lean
-// module's type.
-declare module "*/comline_sim_script.js";
+// `comline-simulator/pkg-script/` is the Rhai-enabled build. The engine's
+// `prepare` produces it by default on `npm install`, but a consumer can opt out
+// (`COMLINE_SIMULATOR_SCRIPT=0`), so these opaque ambients keep `tsc` resolving
+// the lazy `import()`s even when that build (and its generated `.d.ts`) is
+// absent. Callers cast the module to `typeof import("comline-simulator")`.
+declare module "comline-simulator/pkg-script/comline_simulator.js";
+
+declare module "comline-simulator/pkg-script/comline_simulator_bg.wasm?url" {
+  const url: string;
+  export default url;
+}

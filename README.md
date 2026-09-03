@@ -17,40 +17,39 @@ wasm/     comline-playground-wasm — the editor's Rust crate, wasm-bindgen surf
             semantic_tokens / hover / completions   — the LSP handlers verbatim
           deps: comline-core, comline-codegen, comline-codegen-rust,
                 comline-codegen-typescript, comline-language-server (git rev)
-sim-wasm/ a thin wrapper that re-exports ComlineProject/simulator's `Sim`
-          surface (git rev). `npm run sim-wasm` builds it lean (~520 KB);
-          `npm run sim-wasm:script` adds the Rhai `script` behaviour (~2.1 MB),
-          a separate chunk the simulate view fetches only when a `script`
-          behaviour is picked.
 app/      a Vite site: a CodeMirror 6 editor (highlighting / diagnostics /
           hover / autocomplete all from the editor WASM's LSP, in a Web
           Worker), plus the **simulate** view — a thin canvas / inspector /
           frame-log over the sim WASM. `app/src/sim/` is that view; the engine
-          it drives lives in ComlineProject/simulator.
-.github/workflows/deploy.yml   build the WASMs (editor, sim, scripted sim)
-                               → build site → deploy to Pages
+          is the `comline-simulator` git dependency (ComlineProject/simulator),
+          which builds itself to WASM on `npm install` — `pkg/` (lean) plus
+          `pkg-script/` (Rhai, code-split and fetched only when a `script`
+          behaviour is picked).
+.github/workflows/deploy.yml   build editor WASM → npm install (builds the sim
+                               WASM) → build site → deploy to Pages
 ```
 
 ## Develop
 
 ```sh
 cd app
-npm install
-npm run dev              # editor + lean sim WASM, then Vite
-npm run sim-wasm:script  # once, if you want to exercise `script` behaviours
+npm install   # also clones + builds comline-simulator to WASM (needs cargo)
+npm run dev   # editor WASM, then Vite
 ```
 
-`npm run dev` skips the scripted sim WASM (it is slow to build and rarely
-touched); without it, picking a `script` behaviour just shows an inspector
-notice. `npm run build` *does* need it — run `npm run sim-wasm:script` first, as
-CI does. Requires a Rust toolchain with the `wasm32-unknown-unknown` target and
-[`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
+Needs a Rust toolchain with the `wasm32-unknown-unknown` target (for the editor
+WASM via [`wasm-pack`](https://rustwasm.github.io/wasm-pack/), and for
+`comline-simulator`'s install-time build — `npm install` compiles
+`wasm-bindgen-cli` once, then caches it in `~/.cargo`). `wasm-opt` trims the
+output when present. `COMLINE_SIMULATOR_SCRIPT=0 npm install` skips the ~2 MB
+scripted build.
 
 ## Deploy
 
-Push to `master`. The workflow builds the WASM with `wasm-pack`, builds the site
-with Vite (`base: "./"`, so it works under `/<repo>/`), and publishes `app/dist`
-to Pages. Enable Pages → "GitHub Actions" in the repo settings once.
+Push to `master`. The workflow builds the editor WASM (`wasm-pack`), runs
+`npm install` (which builds `comline-simulator` to WASM), builds the site with
+Vite (`base: "./"`, so it works under `/<repo>/`), and publishes `app/dist` to
+Pages. Enable Pages → "GitHub Actions" in the repo settings once.
 
 ## Scope
 

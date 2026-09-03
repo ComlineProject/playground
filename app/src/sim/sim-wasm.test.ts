@@ -1,6 +1,6 @@
-/// The engine now lives in `ComlineProject/simulator` (Rust → WASM). This proves
-/// the wasm loads through the wrapper crate and its `Sim` surface round-trips a
-/// call. The rest of `src/sim/` is being rewired onto it.
+/// The engine lives in `ComlineProject/simulator` (Rust → WASM), pulled in as
+/// the `comline-simulator` git dependency. This proves the wasm loads and its
+/// `Sim` surface round-trips a call.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -8,14 +8,16 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import initEditor, { describe_project } from "../wasm/comline_playground_wasm.js";
-import initSim, { Sim } from "../sim-wasm/comline_sim.js";
+import initSim, { Sim } from "comline-simulator";
+
+const simWasm = fileURLToPath(
+  new URL("../../node_modules/comline-simulator/pkg/comline_simulator_bg.wasm", import.meta.url),
+);
 
 await initEditor(
   readFileSync(fileURLToPath(new URL("../wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
 );
-await initSim(
-  readFileSync(fileURLToPath(new URL("../sim-wasm/comline_sim_bg.wasm", import.meta.url))),
-);
+await initSim(readFileSync(simWasm));
 
 const CHAT = `struct Message {
     body: string
