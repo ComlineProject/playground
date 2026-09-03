@@ -12,7 +12,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  # per-ref, so a push to one branch doesn't cancel another branch's / master's run
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,9 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rust toolchain
-        run: rustup update stable && rustup default stable && rustup target add wasm32-unknown-unknown
+      # The runner ships a current stable toolchain — just add the wasm target.
+      - name: Rust target
+        run: rustup target add wasm32-unknown-unknown
 
+      # Editor wasm crate + anything the sim git-dep's `prepack` compiles on a
+      # cache miss (registry crates, the pinned wasm-bindgen-cli in ~/.cargo/bin).
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -33,6 +37,17 @@ jobs:
             ~/.cargo/bin
             wasm/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'app/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Yarn Berry's global cache holds the *built* `comline-simulator` archive
+      # (post-`prepack`). A hit here means `yarn install` skips the Rust build
+      # entirely — it only re-runs when `app/yarn.lock` changes (a sim bump).
+      - name: Cache yarn
+        uses: actions/cache@v4
+        with:
+          path: ~/.yarn/berry/cache
+          key: ${{ runner.os }}-yarn-${{ hashFiles('app/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-yarn-
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -45,11 +60,9 @@ jobs:
         with:
           node-version: 22
 
-      # `yarn install` pulls `comline-simulator` (the sim engine) as a git
-      # dependency and builds its WASM in `prepack` — lean `pkg/` + scripted
-      # `pkg-script/`. The runner has cargo + wasm-opt; the cargo cache above
-      # keeps the one-time wasm-bindgen-cli build. Yarn is the runner's 1.x,
-      # which delegates to the committed `.yarn/releases/` (Yarn 4).
+      # `yarn install` pulls `comline-simulator` as a git dependency and builds
+      # its WASM in `prepack` (lean `pkg/` + scripted `pkg-script/`) — unless the
+      # yarn cache above already has it. Runner has cargo + wasm-opt.
       - name: Install
         working-directory: app
         run: yarn install
@@ -62,7 +75,8 @@ jobs:
         working-directory: app
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@v3
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: app/dist
 
