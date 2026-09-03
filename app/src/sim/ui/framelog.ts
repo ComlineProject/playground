@@ -26,10 +26,16 @@ export interface ClockBar {
   seed: number;
   /** Present only in stepped mode. */
   clock: SteppedClock | null;
+  recording: boolean;
+  hasRecording: boolean;
   onMode(mode: "real" | "stepped"): void;
   onSeed(seed: number): void;
   /** Put the session on the URL fragment + clipboard; returns the shareable URL. */
   onShare(): string;
+  onRecord(on: boolean): void;
+  onReplay(): void;
+  onExport(): void;
+  onImport(json: string): void;
 }
 
 export interface FrameLog {
@@ -293,6 +299,33 @@ export function frameLog(): FrameLog {
       });
       share.title = "copy a link that restores this topology";
       clockBar.append(share);
+
+      const rec = mkBtn(bar.recording ? "■ stop" : "● rec", () => bar.onRecord(!bar.recording));
+      rec.classList.toggle("recording", bar.recording);
+      rec.title = "capture calls / behaviour & fault edits, then replay them";
+      clockBar.append(rec);
+
+      if (bar.hasRecording && !bar.recording) {
+        clockBar.append(
+          mkBtn("▷ replay", () => bar.onReplay()),
+          mkBtn("⭳", () => bar.onExport()),
+        );
+      }
+      const imp = document.createElement("label");
+      imp.className = "clock-btn";
+      imp.textContent = "⭱";
+      imp.title = "import a recording";
+      const file = document.createElement("input");
+      file.type = "file";
+      file.accept = "application/json,.json";
+      file.hidden = true;
+      file.addEventListener("change", async () => {
+        const f = file.files?.[0];
+        if (f) bar.onImport(await f.text());
+        file.value = "";
+      });
+      imp.append(file);
+      clockBar.append(imp);
 
       const c = bar.clock;
       if (!c) return;

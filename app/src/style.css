@@ -942,6 +942,13 @@ body.mode-simulate #gen-controls {
   opacity: 0.4;
   cursor: default;
 }
+.clock-btn.recording {
+  color: var(--err);
+  border-color: var(--err);
+}
+label.clock-btn {
+  cursor: pointer;
+}
 .clock-queued {
   font-size: 0.6rem;
   color: var(--warn);
