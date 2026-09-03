@@ -8,7 +8,7 @@
     "dev": "yarn wasm && vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "tsc -p tsconfig.test.json && node --import tsx --test \"src/sim/**/*.test.ts\""
+    "test": "tsc -p tsconfig.test.json && node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.0",
@@ -22,6 +22,7 @@
     "@codemirror/state": "^6.4.0",
     "@codemirror/view": "^6.34.0",
     "@lezer/highlight": "^1.2.3",
+    "comline-examples": "git+https://github.com/ComlineProject/examples.git#f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7",
     "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#eff27ce9b077ec411c299743b328a24089387215"
   },
   "devDependencies": {

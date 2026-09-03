@@ -23,36 +23,19 @@ import type {
 import { createSim, type ProjectShape, type SimView } from "./sim/index.ts";
 import initSimWasm from "comline-simulator";
 import simWasmUrl from "comline-simulator/pkg/comline_simulator_bg.wasm?url";
+import examplesData from "comline-examples";
 
-// ── sample: two files, one `use`ing the other ────────────────────────────
-const SAMPLE_FILES: { name: string; doc: string }[] = [
-  {
-    name: "chat.ids",
-    doc: `use types::Message
-
-error Rejected {
-    message = "rejected: {self.reason}"
-    reason: string
+// ── examples ────────────────────────────────────────────────────────────
+// `.ids` projects from ComlineProject/examples (a git dependency; bundled to
+// one JSON in its `prepare`). The first is what a fresh visit opens.
+interface Example {
+  id: string;
+  title: string;
+  blurb: string;
+  entry: string;
+  files: { name: string; source: string }[];
 }
-
-@framing = "jsonrpc"
-protocol Chat {
-    /// Request/response with a raised error.
-    function send(text: string) -> Message ! Rejected;
-    /// Fire-and-forget.
-    function note(text: string);
-}
-`,
-  },
-  {
-    name: "types.ids",
-    doc: `struct Message {
-    body: string
-    seq: u64
-}
-`,
-  },
-];
+const EXAMPLES = examplesData as Example[];
 
 // ── virtual file set ────────────────────────────────────────────────────
 interface SchemaFile {
@@ -70,6 +53,23 @@ const nextId = () => `f${++uid}`;
 
 const activeFile = () => files.find((f) => f.id === activeId)!;
 const project = (): FileInput[] => files.map((f) => ({ path: f.name, source: f.doc }));
+
+// cleared when an example is loaded, set on the first edit — gates the
+// "replace your schema?" confirm in the Examples picker.
+let dirty = false;
+
+/** Replace the whole file set with an example's files. */
+function setFiles(ex: Example) {
+  files = ex.files.map((f) => ({
+    id: nextId(),
+    name: f.name,
+    doc: f.source,
+    state: makeState(f.source, ctx),
+  }));
+  openIds = files.map((f) => f.id);
+  activeId = (files.find((f) => f.name === ex.entry) ?? files[0]).id;
+  dirty = false;
+}
 
 // ── DOM ─────────────────────────────────────────────────────────────────
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -156,6 +156,7 @@ const ctx: EditorContext = {
     const f = activeFile();
     if (!f) return; // the blank scratch buffer shown when no file is open
     f.doc = d;
+    dirty = true;
     scheduleRefresh();
   },
 };
@@ -769,13 +770,33 @@ function wireCollapse(toggleSel: string) {
 wireCollapse("#files-toggle");
 wireCollapse("#problems-toggle");
 
-// ── boot ───────────────────────────────────────────────────────────────
-for (const s of SAMPLE_FILES) {
-  files.push({ id: nextId(), name: s.name, doc: s.doc, state: makeState(s.doc, ctx) });
+// ── examples picker ────────────────────────────────────────────────────
+const examplesEl = $<HTMLSelectElement>("#examples");
+for (const ex of EXAMPLES) {
+  const o = document.createElement("option");
+  o.value = ex.id;
+  o.textContent = ex.title;
+  o.title = ex.blurb;
+  examplesEl.append(o);
 }
-openIds = files.map((f) => f.id);
-activeId = files[0].id;
-view = mountEditor(editorEl, files[0].state);
+examplesEl.addEventListener("change", () => {
+  const ex = EXAMPLES.find((e) => e.id === examplesEl.value);
+  examplesEl.value = "";
+  if (!ex) return;
+  if (dirty && !window.confirm(`Replace the current schema with the "${ex.title}" example?`)) return;
+  setFiles(ex);
+  view.setState(activeFile().state);
+  editorEl.classList.remove("is-hidden");
+  editorEmptyEl.classList.add("is-hidden");
+  renderTabs();
+  renderFileTree();
+  statusEl.textContent = "compiling…";
+  void refresh();
+});
+
+// ── boot ───────────────────────────────────────────────────────────────
+setFiles(EXAMPLES[0]);
+view = mountEditor(editorEl, activeFile().state);
 renderTabs();
 renderFileTree();
 

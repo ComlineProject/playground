@@ -84,7 +84,8 @@ header h1 {
   background: var(--bg-2);
 }
 
-#target {
+#target,
+#examples {
   font: inherit;
   font-size: 0.75rem;
   color: var(--fg);
@@ -93,6 +94,9 @@ header h1 {
   border-radius: 5px;
   padding: 0.15rem 0.4rem;
   cursor: pointer;
+}
+#examples {
+  color: var(--muted);
 }
 
 .status {
