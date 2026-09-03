@@ -16,6 +16,12 @@ import { frameLog, type ClockBar, type Frame, type FrameSource, type LogSource }
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
+/** Mirrors `comline-simulator`'s `DEFAULT_SCRIPT` — a fresh `script` behaviour
+ *  starts as an echo, with the scope contract spelled out in a comment. */
+const DEFAULT_SCRIPT = `// \`params\` is the decoded request. \`state\` is a map that persists between
+// calls. The last expression is the reply; \`throw\` raises an error.
+params`;
+
 type Role = "server" | "client";
 
 interface Faults {
@@ -94,7 +100,13 @@ function faultsActive(f: Faults): boolean {
   );
 }
 
-export function createSim(): SimView {
+export interface SimOpts {
+  /** Test seam: hand back the scripted sim module instead of `import()`ing it
+   *  (which, in a build, is a code-split fetch of the heavier Rhai wasm). */
+  loadScripted?: () => Promise<{ Sim: typeof Sim }>;
+}
+
+export function createSim(opts: SimOpts = {}): SimView {
   let sim: Sim | null = null;
   let shape: ProjectShape | null = null;
   let shapeJson = "";
@@ -107,6 +119,43 @@ export function createSim(): SimView {
   let playHandle: ReturnType<typeof setInterval> | null = null;
   let speed = 1;
   const pendingCalls = new Map<number, { out: HTMLElement; throws: ThrowShape[] }>();
+
+  // Scripting (the Rhai `script` behaviour) rides a ~4× heavier wasm, so it is
+  // loaded only once a `script` behaviour is actually picked. `SimClass` starts
+  // lean; `ensureScripted` swaps in the scripted class and re-seats the live
+  // session on it (via the `#s=` link), after which every rebuild uses it too.
+  let SimClass: typeof Sim = Sim;
+  let scripted = false;
+  const loadScripted =
+    opts.loadScripted ??
+    (async () => {
+      // Same surface as the lean module, just Rhai-enabled — hence the cast
+      // (the ambient for this on-demand artifact is deliberately opaque).
+      const m = (await import(
+        "../../sim-wasm-script/comline_sim_script.js"
+      )) as typeof import("../../sim-wasm/comline_sim.js");
+      await m.default();
+      return { Sim: m.Sim };
+    });
+  async function ensureScripted(): Promise<boolean> {
+    if (scripted) return true;
+    try {
+      SimClass = (await loadScripted()).Sim;
+      if (sim) {
+        const link = sim.link();
+        const next = new SimClass(shapeJson, link);
+        sim.free();
+        sim = next;
+      }
+      scripted = true;
+      return true;
+    } catch (err) {
+      flashInspectorError(`scripting unavailable · ${String((err as Error).message ?? err)}`);
+      return false;
+    }
+  }
+  const sessionHasScript = () =>
+    !!model?.instances.some((i) => Object.values(i.behaviors).some((b) => b.kind === "script"));
 
   const el = div("sim");
   const paletteEl = div("sim-col sim-palette");
@@ -949,7 +998,7 @@ export function createSim(): SimView {
         label: string;
         applies: boolean;
       }[]
-    ).filter((e) => e.applies && e.kind !== "script"); // TODO: lazy-load the scripted wasm
+    ).filter((e) => e.applies); // `script` lazy-loads its wasm on first pick
 
     const wrap = div("behavior-row");
     const head = div("behavior-head");
@@ -971,6 +1020,10 @@ export function createSim(): SimView {
         cfgHost.append(forwardConfig(i, fnName));
         return;
       }
+      if (setting().kind === "script") {
+        cfgHost.append(scriptConfig(i, fnName));
+        return;
+      }
       const cfg = document.createElement("textarea");
       cfg.className = "behavior-config mono";
       cfg.rows = 3;
@@ -989,13 +1042,48 @@ export function createSim(): SimView {
       cfgHost.append(cfg);
     };
 
-    sel.addEventListener("change", () => {
-      sim!.set_behavior(i.id, fnName, selValue(sel), "{}"); // config defaults engine-side
+    sel.addEventListener("change", async () => {
+      const kind = selValue(sel);
+      if (kind === "script" && !scripted) {
+        // First `script` pick: pull the scripted wasm and re-seat the session
+        // on it. If it fails to load, roll the picker back and bail.
+        if (!(await ensureScripted())) {
+          sel.value = setting().kind;
+          return;
+        }
+        pendingCalls.clear();
+        sim!.set_behavior(i.id, fnName, "script", JSON.stringify({ source: DEFAULT_SCRIPT }));
+        refresh();
+        redraw();
+        return;
+      }
+      const config = kind === "script" ? JSON.stringify({ source: DEFAULT_SCRIPT }) : "{}";
+      sim!.set_behavior(i.id, fnName, kind, config); // other configs default engine-side
       refresh();
       renderConfig();
       redrawSoft();
     });
     renderConfig();
+    return wrap;
+  }
+
+  /** The Rhai source box for a `Script` behaviour. `params` (the decoded
+   *  request) and a persistent `state` map are in scope; the last expression is
+   *  the reply, `throw` raises an error. */
+  function scriptConfig(i: ModelInstance, fnName: string): HTMLElement {
+    const wrap = div("script-cfg");
+    const src = () =>
+      ((inst(i.id)?.behaviors[fnName]?.config ?? {}) as { source?: string }).source ?? DEFAULT_SCRIPT;
+    const ta = document.createElement("textarea");
+    ta.className = "behavior-config script mono";
+    ta.rows = 6;
+    ta.spellcheck = false;
+    ta.value = src();
+    ta.addEventListener("change", () => {
+      sim!.set_behavior(i.id, fnName, "script", JSON.stringify({ source: ta.value }));
+      refresh();
+    });
+    wrap.append(ta);
     return wrap;
   }
 
@@ -1154,16 +1242,19 @@ export function createSim(): SimView {
       shape = shapeObj;
       shapeJson = JSON.stringify(shapeObj);
       try {
-        if (serialized) sim = new Sim(shapeJson, serialized);
-        else if (!sim) sim = new Sim(shapeJson);
+        if (serialized) sim = new SimClass(shapeJson, serialized);
+        else if (!sim) sim = new SimClass(shapeJson);
         else sim.set_shape(shapeJson);
       } catch {
-        sim = new Sim(shapeJson);
+        sim = new SimClass(shapeJson);
       }
       selectedId = null;
       selectedConnId = null;
       renderPalette();
       redraw();
+      // A restored link may carry `script` behaviours the lean wasm only stubs —
+      // upgrade in the background, then re-render on the real engine.
+      if (!scripted && sessionHasScript()) void ensureScripted().then(redraw);
     },
     serialize() {
       return sim ? sim.link() : "";

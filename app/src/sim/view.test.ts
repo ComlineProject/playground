@@ -4,7 +4,7 @@
 /// placement, drag-to-connect, frame filters), and 2a fan-out (many
 /// connections, one merged log), and 2b node grouping (a gateway box).
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
@@ -780,3 +780,52 @@ test("2e — record a call through the UI, then replay it", async () => {
   assert.equal((sim.el.querySelector(".clock-mode") as HTMLSelectElement).value, "stepped");
   sim.destroy();
 });
+
+// ── 2f — scripted behaviour (Rhai), lazy-loaded ──────────────────────
+const scriptedWasm = fileURLToPath(
+  new URL("../sim-wasm-script/comline_sim_script_bg.wasm", import.meta.url),
+);
+const loadScripted = async () => {
+  const m = await import("../sim-wasm-script/comline_sim_script.js");
+  await m.default(readFileSync(scriptedWasm));
+  return { Sim: m.Sim };
+};
+
+test(
+  "2f — picking `script` pulls the scripted wasm and runs a Rhai reply",
+  { skip: existsSync(scriptedWasm) ? false : "run `npm run sim-wasm:script` first" },
+  async () => {
+    const sim = createSim({ loadScripted });
+    document.body.append(sim.el);
+    sim.setShape(shape());
+    const { server, client } = place(sim);
+
+    fire(server, "click");
+    // `script` is offered even though the lean wasm is loaded; picking it swaps
+    // in the scripted engine before the behaviour takes effect.
+    pick(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement, "script");
+    for (let i = 0; i < 20 && !sim.el.querySelector(".behavior-config.script"); i++) await tick(20);
+    const src = sim.el.querySelector(".behavior-row .behavior-config.script") as HTMLTextAreaElement;
+    assert.ok(src, "the script source box replaced the JSON config box");
+
+    src.value = `#{ body: params.text + "!", seq: 7 }`;
+    fire(src, "change");
+
+    fire(client, "click");
+    pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+    await tick();
+    pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+    (sim.el.querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
+    fire(
+      [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+      "click",
+    );
+    await tick(40);
+
+    const out = sim.el.querySelector(".call-out")!;
+    assert.match(out.textContent!, /"body": "hello!"/);
+    assert.match(out.textContent!, /"seq": 7/);
+    assert.ok(out.classList.contains("ok"));
+    sim.destroy();
+  },
+);

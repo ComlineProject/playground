@@ -6,7 +6,7 @@
   "scripts": {
     "wasm": "wasm-pack build ../wasm --release --target web --out-dir ../app/src/wasm --out-name comline_playground_wasm",
     "sim-wasm": "wasm-pack build ../sim-wasm --release --target web --out-dir ../app/src/sim-wasm --out-name comline_sim",
-    "sim-wasm:script": "wasm-pack build ../sim-wasm --release --target web --out-dir ../app/src/sim-wasm --out-name comline_sim_script -- --features script",
+    "sim-wasm:script": "wasm-pack build ../sim-wasm --release --target web --out-dir ../app/src/sim-wasm-script --out-name comline_sim_script -- --features script",
     "wasm:all": "npm run wasm && npm run sim-wasm",
     "dev": "npm run wasm:all && vite",
     "build": "tsc --noEmit && vite build",

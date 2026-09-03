@@ -41,9 +41,15 @@ jobs:
         run: wasm-pack build wasm --release --target web --out-dir ../app/src/wasm --out-name comline_playground_wasm
 
       # The simulation engine (ComlineProject/simulator), lean build — no Rhai
-      # scripting. The scripted artifact is fetched on demand by the UI.
+      # scripting.
       - name: Build sim WASM
         run: wasm-pack build sim-wasm --release --target web --out-dir ../app/src/sim-wasm --out-name comline_sim
+
+      # The scripted build (Rhai `script` behaviour, ~4× the wasm). Same crate,
+      # `--features script`, its own out-dir; the UI code-splits it and fetches
+      # it on demand.
+      - name: Build scripted sim WASM
+        run: wasm-pack build sim-wasm --release --target web --out-dir ../app/src/sim-wasm-script --out-name comline_sim_script -- --features script
 
       - name: Node
         uses: actions/setup-node@v4
