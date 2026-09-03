@@ -665,6 +665,12 @@ body.mode-simulate #gen-controls {
   border-top: 1px solid var(--border);
   padding-top: 0.6rem;
 }
+/* the first section heads the panel — no divider above nothing */
+.sim-inspector > .insp-section:first-child {
+  margin-top: 0.1rem;
+  border-top: none;
+  padding-top: 0;
+}
 .insp-facts {
   display: grid;
   gap: 0.25rem;
@@ -696,6 +702,7 @@ body.mode-simulate #gen-controls {
 .conn-dot {
   color: var(--muted);
   font-size: 0.7rem;
+  vertical-align: middle;
 }
 .conn-dot.ok {
   color: var(--ok);

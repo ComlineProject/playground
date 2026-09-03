@@ -881,12 +881,18 @@ export function createSim(opts: SimOpts = {}): SimView {
     const framing = conn.framing === "auto"
       ? findProtocol(shape!, server?.schemaNs ?? "", server?.protocol ?? "")?.protocol.framing ?? "?"
       : conn.framing;
+    const status = document.createElement("span");
+    const dot = document.createElement("span");
+    dot.className = `conn-dot ${err || dead ? "err" : "ok"}`;
+    dot.textContent = "●";
+    status.append(dot, ` ${err ? `refused · ${err}` : dead ? "timed out" : "live"}`);
     inspectorEl.append(
+      section("connection"),
       facts([
         ["client", client?.name ?? conn.clientId],
         ["server", server?.name ?? conn.serverId],
         ["framing", framing],
-        ["status", err ? `refused · ${err}` : dead ? "timed out" : "live"],
+        ["status", status],
       ]),
     );
     if (err) inspectorEl.append(muted(`connection refused · ${err}`, "err"));
@@ -898,7 +904,7 @@ export function createSim(opts: SimOpts = {}): SimView {
           redraw();
         }),
       );
-    } else inspectorEl.append(muted("● live", "ok"));
+    }
 
     inspectorEl.append(section("faults"));
     inspectorEl.append(faultControls(conn));
@@ -1311,7 +1317,7 @@ function row(label: string, control: HTMLElement): HTMLElement {
   r.append(l, control);
   return r;
 }
-function facts(pairs: [string, string][]): HTMLElement {
+function facts(pairs: [string, string | Node][]): HTMLElement {
   const f = div("insp-facts");
   for (const [k, v] of pairs) {
     const kv = div("fact");
@@ -1320,7 +1326,8 @@ function facts(pairs: [string, string][]): HTMLElement {
     kk.textContent = k;
     const vv = document.createElement("span");
     vv.className = "fact-v";
-    vv.textContent = v;
+    if (typeof v === "string") vv.textContent = v;
+    else vv.append(v);
     kv.append(kk, vv);
     f.append(kv);
   }
