@@ -123,8 +123,11 @@ export function frameLog(): FrameLog {
       }
     }
 
+    const dropped = /dropped/.test(f.fault ?? "");
     const row = document.createElement("details");
-    row.className = `frame-row frame-${detail.kind}${multi ? " has-conn" : ""}`;
+    row.className = `frame-row frame-${detail.kind}${multi ? " has-conn" : ""}${
+      f.fault ? " frame-faulted" : ""
+    }${dropped ? " frame-dropped" : ""}`;
     row.dataset.kind = detail.kind;
     row.dataset.conn = connId;
     row.hidden = hidden.has(detail.kind) || hiddenConns.has(connId);
@@ -132,10 +135,11 @@ export function frameLog(): FrameLog {
     const summary = document.createElement("summary");
     const rtt = cell("frame-delta", rttText);
     if (rttText) rtt.title = "round-trip time";
+    const kindText = f.fault ? `${detail.kind} · ${f.fault}` : detail.kind;
     const cells = [
       cell("frame-seq", String(f.seq).padStart(3, "0")),
       cell("frame-dir", `${f.from} → ${f.to}`),
-      cell("frame-kind", detail.kind),
+      cell("frame-kind", kindText),
       cell("frame-fn", detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : "")),
       rtt,
       cell("frame-len", `${f.bytes.length} B`),

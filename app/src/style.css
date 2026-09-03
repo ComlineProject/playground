@@ -6,6 +6,7 @@
   --accent: #7aa2f7;
   --ok: #9ece6a;
   --err: #f7768e;
+  --warn: #e0af68;
   --border: #34344a;
   font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 }
@@ -546,6 +547,10 @@ body.mode-simulate #gen-controls {
   stroke: var(--muted);
   stroke-dasharray: 5 4;
 }
+.sim-wire .wire-faulty {
+  stroke: var(--warn);
+  stroke-dasharray: 6 4;
+}
 .sim-wire .wire-drag {
   stroke: var(--accent);
   stroke-dasharray: 4 3;
@@ -956,6 +961,37 @@ details.frame-row > summary > span {
 .frame-refused {
   padding: 0.3rem 0.4rem;
   color: var(--err);
+}
+.frame-faulted .frame-kind {
+  color: var(--warn);
+}
+.frame-dropped {
+  opacity: 0.45;
+}
+.frame-dropped .frame-kind {
+  color: var(--err);
+  text-decoration: line-through;
+}
+
+/* per-connection fault controls */
+.fault-ctls {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.4rem;
+}
+.fault-ctls input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--warn);
+}
+.fault-ctls input[type="number"] {
+  width: 4.5rem;
+}
+.fault-val {
+  flex: 0 0 2.6rem;
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 .frame-idle {
   display: flex;

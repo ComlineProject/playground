@@ -3,10 +3,11 @@
 /// instances, an inspector (instance facts, per-function behaviours,
 /// per-connection controls, and — for a connected client — the call form), and
 /// the merged frame list. Phase 2: many connections (2a), a node hosting
-/// several instances — a gateway (2b).
+/// several instances — a gateway (2b), an unreliable wire per connection (2c).
 
 import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
 import { Wires } from "../engine.ts";
+import { faultsActive } from "../faults.ts";
 import { SimRemoteError } from "../generic.ts";
 import {
   addConnection,
@@ -345,7 +346,8 @@ export function createSim(): SimView {
       const a = center(c);
       const b = center(s);
       const live = wires.get(conn.id);
-      const cls = live?.error ? "wire-refused" : live ? "wire-live" : "wire-pending";
+      let cls = live?.error || live?.dead() ? "wire-refused" : live ? "wire-live" : "wire-pending";
+      if (live && !live.error && !live.dead() && faultsActive(conn.faults)) cls = "wire-faulty";
 
       const hit = document.createElementNS(SVGNS, "line");
       hit.setAttribute("class", "wire-hit");
@@ -533,13 +535,20 @@ export function createSim(): SimView {
       const other = instance(session, otherId);
       const lc = wires.get(conn.id);
       const r = div("conn-row");
+      const bad = lc?.error || lc?.dead();
       const dot = document.createElement("span");
-      dot.className = `conn-dot ${lc?.error ? "err" : lc ? "ok" : ""}`;
+      dot.className = `conn-dot ${bad ? "err" : lc ? "ok" : ""}`;
       dot.textContent = "●";
       const name = document.createElement("button");
       name.className = "conn-name";
       name.textContent = `${conn.clientId === sel.id ? "→" : "←"} ${other?.name ?? otherId}`;
-      name.title = lc?.error ? `refused · ${lc.error}` : "inspect connection";
+      name.title = lc?.error
+        ? `refused · ${lc.error}`
+        : lc?.dead()
+          ? "timed out"
+          : faultsActive(conn.faults)
+            ? "faults active"
+            : "inspect connection";
       name.addEventListener("click", () => selectConn(conn.id));
       const x = document.createElement("button");
       x.className = "conn-x";
@@ -577,6 +586,18 @@ export function createSim(): SimView {
     });
     inspectorEl.append(row("latency ms", latency));
 
+    const timeout = document.createElement("input");
+    timeout.type = "number";
+    timeout.min = "0";
+    timeout.step = "100";
+    timeout.value = String(session.callTimeoutMs);
+    timeout.title = "how long a client waits before RuntimeError(timeout); 0 = forever";
+    timeout.addEventListener("change", () => {
+      session!.callTimeoutMs = Math.max(0, Number(timeout.value) || 0);
+      void rebuildWires();
+    });
+    inspectorEl.append(row("call timeout ms", timeout));
+
     // server: per-function behaviours
     if (sel.role === "server") {
       inspectorEl.append(section("behaviours"));
@@ -610,11 +631,99 @@ export function createSim(): SimView {
       ]),
     );
     if (lc?.error) inspectorEl.append(muted(`connection refused · ${lc.error}`, "err"));
-    else if (lc) inspectorEl.append(muted("● live", "ok"));
+    else if (lc?.dead()) {
+      inspectorEl.append(muted("timed out — the client is desynced", "err"));
+      inspectorEl.append(button("reconnect", "primary", () => void rebuildWires()));
+    } else if (lc) inspectorEl.append(muted("● live", "ok"));
+
+    inspectorEl.append(section("faults"));
+    inspectorEl.append(faultControls(conn));
+
     inspectorEl.append(
       button("disconnect", "danger", () => disconnect(conn.id)),
       button("select client", "", () => select(conn.clientId)),
     );
+  }
+
+  /** Live sliders / toggles for one connection's `FaultSpec`. Edits mutate the
+   *  spec in place — both transports hold the same object — so they take effect
+   *  on the next frame; the edge colour follows immediately. */
+  function faultControls(conn: Connection): HTMLElement {
+    const wrap = div("fault-ctls");
+    const f = conn.faults;
+
+    const pct = (label: string, get: () => number, set: (v: number) => void) => {
+      const inp = document.createElement("input");
+      inp.type = "range";
+      inp.min = "0";
+      inp.max = "100";
+      inp.step = "5";
+      inp.value = String(Math.round(get() * 100));
+      const out = document.createElement("span");
+      out.className = "fault-val mono";
+      out.textContent = `${inp.value}%`;
+      inp.addEventListener("input", () => {
+        set(Number(inp.value) / 100);
+        out.textContent = `${inp.value}%`;
+        drawWires();
+      });
+      const r = div("insp-row");
+      const l = document.createElement("span");
+      l.className = "insp-label";
+      l.textContent = label;
+      r.append(l, inp, out);
+      return r;
+    };
+    const num = (label: string, get: () => number, set: (v: number) => void, step = "10") => {
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.min = "0";
+      inp.step = step;
+      inp.value = String(get());
+      inp.addEventListener("change", () => {
+        set(Math.max(0, Number(inp.value) || 0));
+        drawWires();
+      });
+      const r = div("insp-row");
+      const l = document.createElement("span");
+      l.className = "insp-label";
+      l.textContent = label;
+      r.append(l, inp);
+      return r;
+    };
+
+    const applyTo = document.createElement("select");
+    for (const v of ["both", "requests", "responses"] as const) {
+      applyTo.append(opt(v, v, v === f.applyTo));
+    }
+    applyTo.addEventListener("change", () => {
+      f.applyTo = selValue(applyTo) as typeof f.applyTo;
+      drawWires();
+    });
+
+    const partition = document.createElement("input");
+    partition.type = "checkbox";
+    partition.checked = f.partition;
+    partition.addEventListener("change", () => {
+      f.partition = partition.checked;
+      drawWires();
+    });
+    const pRow = div("insp-row");
+    const pl = document.createElement("span");
+    pl.className = "insp-label";
+    pl.textContent = "partition";
+    pRow.append(pl, partition);
+
+    wrap.append(
+      row("apply to", applyTo),
+      pct("drop", () => f.dropProb, (v) => (f.dropProb = v)),
+      pct("corrupt", () => f.corruptProb, (v) => (f.corruptProb = v)),
+      num("delay min ms", () => f.delayMin, (v) => (f.delayMin = v)),
+      num("delay max ms", () => f.delayMax, (v) => (f.delayMax = v)),
+      num("reorder window", () => f.reorderWindow, (v) => (f.reorderWindow = v), "1"),
+      pRow,
+    );
+    return wrap;
   }
 
   function behaviorRow(inst: Instance, fnName: string): HTMLElement {
