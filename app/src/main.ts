@@ -21,6 +21,8 @@ import type {
   SemanticTokens,
 } from "./worker.ts";
 import { createSim, type ProjectShape, type SimView } from "./sim/index.ts";
+import initSimWasm from "comline-simulator";
+import simWasmUrl from "comline-simulator/pkg/comline_simulator_bg.wasm?url";
 
 // ── sample: two files, one `use`ing the other ────────────────────────────
 const SAMPLE_FILES: { name: string; doc: string }[] = [
@@ -729,6 +731,7 @@ let sim: SimView | null = null;
 let simLoaded = false;
 
 async function enterSimulate() {
+  await initSimWasm({ module_or_path: simWasmUrl }); // idempotent
   const shape = await unwrap<ProjectShape>(
     { cmd: "describeProject", files: project() },
     { schemas: [] },

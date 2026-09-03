@@ -10,7 +10,7 @@
 /// polls `sim.frames()`.
 
 import { findProtocol, type ProjectShape, type ThrowShape } from "../shape.ts";
-import { Sim } from "../../sim-wasm/comline_sim.js";
+import { Sim } from "comline-simulator";
 import { argsForm, type ArgsForm } from "./argsform.ts";
 import { frameLog, type ClockBar, type Frame, type FrameSource, type LogSource } from "./framelog.ts";
 
@@ -130,11 +130,15 @@ export function createSim(opts: SimOpts = {}): SimView {
     opts.loadScripted ??
     (async () => {
       // Same surface as the lean module, just Rhai-enabled — hence the cast
-      // (the ambient for this on-demand artifact is deliberately opaque).
+      // (the `pkg-script/` ambient is deliberately opaque). Vite code-splits
+      // this dynamic import, so the ~2 MB scripted wasm only downloads here.
       const m = (await import(
-        "../../sim-wasm-script/comline_sim_script.js"
-      )) as typeof import("../../sim-wasm/comline_sim.js");
-      await m.default();
+        "comline-simulator/pkg-script/comline_simulator.js"
+      )) as typeof import("comline-simulator");
+      const { default: wasmUrl } = await import(
+        "comline-simulator/pkg-script/comline_simulator_bg.wasm?url"
+      );
+      await m.default({ module_or_path: wasmUrl });
       return { Sim: m.Sim };
     });
   async function ensureScripted(): Promise<boolean> {
