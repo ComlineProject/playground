@@ -2,9 +2,10 @@
 /// connection into one time-ordered list — a row per frame: connection (when
 /// there is more than one), direction, kind, function, round-trip time (on the
 /// reply, from its own request by id), byte length — expanding to the decoded
-/// envelope, the raw hex, and the framing name. A gap in *virtual* time over
-/// `IDLE_MS` inserts an `idle` separator. Every row kind and every connection is
-/// filterable from the header. A refused connection gets its own row.
+/// envelope, the framing name, and the raw bytes as hex or text. A gap in
+/// *virtual* time over `IDLE_MS` inserts an `idle` separator. Every row kind and
+/// every connection is filterable from the header. A refused connection gets its
+/// own row. The pane's height is drag-resizable by its top grip.
 ///
 /// The engine is the `comline-simulator` wasm now: frames are polled from the
 /// `Sim`, not pushed from a `Tap`. The view calls `poll()` after it advances the
@@ -82,9 +83,56 @@ export interface FrameLog {
 
 const IDLE_MS = 2000;
 
+/** Height (px) of the frames pane — grabbed by its grip, kept per-viewer. */
+const HEIGHT_KEY = "sim.frames.height";
+function storedHeight(): number | null {
+  try {
+    const n = Number(localStorage.getItem(HEIGHT_KEY));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 export function frameLog(): FrameLog {
   const el = document.createElement("div");
   el.className = "sim-frames";
+
+  // ── resize grip ──────────────────────────────────────────────────────
+  // drags the `.sim` grid's bottom row; the canvas above takes the rest.
+  const grip = document.createElement("div");
+  grip.className = "sim-frames-grip";
+  grip.title = "drag to resize";
+  const applyHeight = (h: number) => {
+    const sim = el.closest<HTMLElement>(".sim");
+    if (!sim) return;
+    const max = Math.max(140, sim.clientHeight - 160);
+    const clamped = Math.round(Math.min(max, Math.max(120, h)));
+    sim.style.gridTemplateRows = `1fr ${clamped}px`;
+    try {
+      localStorage.setItem(HEIGHT_KEY, String(clamped));
+    } catch {
+      /* private mode — just don't persist */
+    }
+  };
+  const saved = storedHeight();
+  if (saved !== null && typeof requestAnimationFrame === "function") {
+    const apply = () => (el.closest(".sim") ? applyHeight(saved) : requestAnimationFrame(apply));
+    requestAnimationFrame(apply);
+  }
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = el.clientHeight;
+    const move = (ev: PointerEvent) => applyHeight(startH + (startY - ev.clientY));
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
 
   const head = document.createElement("div");
   head.className = "sim-frames-head";
@@ -122,7 +170,7 @@ export function frameLog(): FrameLog {
 
   const list = document.createElement("div");
   list.className = "sim-frames-list";
-  el.append(head, list);
+  el.append(grip, head, list);
 
   let sources: LogSource[] = [];
   let api: FrameSource = { frames: () => [], detail: () => null };
@@ -219,18 +267,30 @@ export function frameLog(): FrameLog {
     if ("ok" in detail) body.append(json("ok", detail.ok));
     if (detail.err) body.append(json(`err · ordinal ${detail.err.ordinal}`, detail.err.body));
 
-    const hexToggle = document.createElement("button");
-    hexToggle.className = "hex-toggle";
-    hexToggle.textContent = "hex";
-    const hex = document.createElement("pre");
-    hex.className = "frame-hex";
-    hex.hidden = true;
-    hex.textContent = toHex(f.bytes);
-    hexToggle.addEventListener("click", (e) => {
-      e.preventDefault();
-      hex.hidden = !hex.hidden;
-    });
-    body.append(hexToggle, hex);
+    // raw bytes — as hex, or decoded as text (non-printables → ·)
+    const rawBtns = document.createElement("div");
+    rawBtns.className = "frame-raw-btns";
+    const rawPanes: HTMLElement[] = [];
+    for (const [label, text] of [
+      ["hex", toHex(f.bytes)],
+      ["text", bytesAsText(f.bytes)],
+    ] as const) {
+      const btn = document.createElement("button");
+      btn.className = "bytes-toggle";
+      btn.textContent = label;
+      const pre = document.createElement("pre");
+      pre.className = "frame-bytes";
+      pre.hidden = true;
+      pre.textContent = text;
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        pre.hidden = !pre.hidden;
+        btn.classList.toggle("on", !pre.hidden);
+      });
+      rawBtns.append(btn);
+      rawPanes.push(pre);
+    }
+    body.append(rawBtns, ...rawPanes);
 
     row.append(body);
     list.append(row);
@@ -386,6 +446,13 @@ function humanGap(ms: number): string {
 
 function toHex(bytes: number[]): string {
   return bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
+}
+
+/** The bytes decoded as UTF-8, control / non-printable chars shown as `·`. */
+function bytesAsText(bytes: number[]): string {
+  const s = new TextDecoder("utf-8", { fatal: false }).decode(Uint8Array.from(bytes));
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFD]/g, "\u00b7");
 }
 
 function cell(cls: string, text: string): HTMLSpanElement {
