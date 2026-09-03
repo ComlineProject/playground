@@ -1,43 +1,74 @@
-/// The full-width simulate view: a palette of protocol × role, a canvas of
-/// node boxes (each hosting one or more instances), the connections between
+/// The full-width simulate view: a palette of protocol × role, a canvas of node
+/// boxes (each hosting one or more instances), the connections between
 /// instances, an inspector (instance facts, per-function behaviours,
 /// per-connection controls, and — for a connected client — the call form), and
-/// the merged frame list. Phase 2: many connections (2a), a node hosting
-/// several instances — a gateway (2b), an unreliable wire per connection (2c),
-/// a virtual clock (2d), a shareable session URL + record & replay (2e).
+/// the merged frame list.
+///
+/// The engine is `comline-simulator` (Rust → WASM) now. This module holds a
+/// `Sim`, mirrors its `session_json()` for rendering, and drives it — a call is
+/// `sim.call()` + advancing the clock + polling `sim.result()`; the frame log
+/// polls `sim.frames()`.
 
-import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
-import { RealClock, SteppedClock, type Clock } from "../clock.ts";
-import { Wires } from "../engine.ts";
-import { faultsActive } from "../faults.ts";
-import { SimRemoteError } from "../generic.ts";
-import {
-  addConnection,
-  addInstance,
-  connectionsFor,
-  emptySession,
-  instance,
-  moveNode,
-  rebuild,
-  removeConnection,
-  removeInstance,
-  renameNode,
-  resyncInstance,
-  setBehavior,
-  type Connection,
-  type Instance,
-  type Node,
-  type Role,
-  type Session,
-} from "../model.ts";
-import { Recorder, replayRecording, type Recording } from "../record.ts";
-import { decodeSession, encodeSession } from "../session-codec.ts";
-import { findProtocol, type ProjectShape } from "../shape.ts";
-import type { LogSource } from "./framelog.ts";
+import { findProtocol, type ProjectShape, type ThrowShape } from "../shape.ts";
+import { Sim } from "../../sim-wasm/comline_sim.js";
 import { argsForm, type ArgsForm } from "./argsform.ts";
-import { frameLog } from "./framelog.ts";
+import { frameLog, type ClockBar, type Frame, type FrameSource, type LogSource } from "./framelog.ts";
 
 const SVGNS = "http://www.w3.org/2000/svg";
+
+type Role = "server" | "client";
+
+interface Faults {
+  dropProb: number;
+  delayMin: number;
+  delayMax: number;
+  reorderWindow: number;
+  corruptProb: number;
+  partition: boolean;
+  applyTo: "requests" | "responses" | "both";
+}
+
+interface ModelNode {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  instanceIds: string[];
+}
+interface ModelInstance {
+  id: string;
+  name: string;
+  role: Role;
+  schemaNs: string;
+  protocol: string;
+  behaviors: Record<string, { kind: string; config: unknown }>;
+  irHash: string;
+  nodeId: string;
+}
+interface ModelConn {
+  id: string;
+  clientId: string;
+  serverId: string;
+  faults: Faults;
+  framing: "auto" | "datagram" | "jsonrpc";
+  wireFormat: "json" | "msgpack";
+}
+interface Model {
+  nodes: ModelNode[];
+  instances: ModelInstance[];
+  connections: ModelConn[];
+  latencyMs: number;
+  callTimeoutMs: number;
+  seed: number;
+  clockMode: "real" | "stepped";
+}
+
+/** A `Sim.record_stop()` payload. */
+export interface Recording {
+  v: number;
+  session: string;
+  events: unknown[];
+}
 
 export interface SimView {
   el: HTMLElement;
@@ -48,21 +79,34 @@ export interface SimView {
   serialize(): string;
   /** Start / stop capturing inputs; `stop` returns the recording. */
   record(on: boolean): Recording | null;
-  /** Re-run a recording on a fresh stepped clock, into this view. */
+  /** Re-run a recording, into this view. */
   replay(rec: Recording): Promise<void>;
   destroy(): void;
 }
 
-export function createSim(): SimView {
-  let session: Session | null = null;
-  const wires = new Wires();
-  let clock: Clock = new RealClock();
-  const recorder = new Recorder();
-  let selectedId: string | null = null; // selected instance
-  let selectedConnId: string | null = null; // selected connection (edge)
-  let callForm: ArgsForm | null = null;
+function faultsActive(f: Faults): boolean {
+  return (
+    f.partition ||
+    f.dropProb > 0 ||
+    f.corruptProb > 0 ||
+    f.reorderWindow > 0 ||
+    f.delayMax > 0
+  );
+}
 
-  const capture = (e: Parameters<Recorder["capture"]>[0]) => recorder.capture(e, clock.now());
+export function createSim(): SimView {
+  let sim: Sim | null = null;
+  let shape: ProjectShape | null = null;
+  let shapeJson = "";
+  let model: Model | null = null;
+  let clockMode: "real" | "stepped" = "real";
+  let selectedId: string | null = null;
+  let selectedConnId: string | null = null;
+  let callForm: ArgsForm | null = null;
+  let lastRecording: Recording | null = null;
+  let playHandle: ReturnType<typeof setInterval> | null = null;
+  let speed = 1;
+  const pendingCalls = new Map<number, { out: HTMLElement; throws: ThrowShape[] }>();
 
   const el = div("sim");
   const paletteEl = div("sim-col sim-palette");
@@ -83,11 +127,31 @@ export function createSim(): SimView {
   const onResize = () => drawWires();
   window.addEventListener("resize", onResize);
 
+  const frameApi: FrameSource = {
+    frames: (connId) => (sim ? (JSON.parse(sim.frames(connId)) as Frame[]) : []),
+    detail: (connId, seq) => {
+      const d = sim?.describe_frame(connId, seq);
+      return d ? JSON.parse(d) : null;
+    },
+  };
+
+  // ── model mirror ─────────────────────────────────────────────────────
+  function refresh() {
+    model = sim ? (JSON.parse(sim.session_json()) as Model) : null;
+    if (model) clockMode = model.clockMode;
+  }
+  const inst = (id: string) => model?.instances.find((i) => i.id === id) ?? null;
+  const node = (id: string) => model?.nodes.find((n) => n.id === id) ?? null;
+  const connsFor = (id: string) =>
+    model?.connections.filter((c) => c.clientId === id || c.serverId === id) ?? [];
+  const live = (connId: string) =>
+    sim ? !sim.connection_error(connId) && !sim.connection_dead(connId) : false;
+
   // ── palette ──────────────────────────────────────────────────────────
   function renderPalette() {
     paletteEl.replaceChildren();
-    if (!session) return;
-    for (const schema of session.shape.schemas) {
+    if (!shape) return;
+    for (const schema of shape.schemas) {
       for (const protocol of schema.protocols) {
         const group = div("palette-group");
         const title = document.createElement("div");
@@ -117,7 +181,7 @@ export function createSim(): SimView {
   }
 
   // ── canvas ───────────────────────────────────────────────────────────
-  let hoverId: string | null = null; // instance row the pointer is over, for drop-to-connect
+  let hoverId: string | null = null;
 
   const dropHint = document.createElement("p");
   dropHint.className = "muted pad canvas-hint";
@@ -125,8 +189,6 @@ export function createSim(): SimView {
     "drag roles here — drop onto a box to add to it (a gateway), then drag between ports";
   canvasEl.append(dropHint);
 
-  /** Event point in canvas coordinates, or `null` when the environment has no
-   *  layout (jsdom / linkedom in tests). */
   function canvasPoint(e: { clientX?: number; clientY?: number }): { x: number; y: number } | null {
     if (typeof e.clientX !== "number" || typeof e.clientY !== "number") return null;
     const r = canvasEl.getBoundingClientRect();
@@ -152,29 +214,28 @@ export function createSim(): SimView {
     e.preventDefault();
     clearDropTarget();
     const raw = e.dataTransfer?.getData("application/json");
-    if (!raw || !session) return;
+    if (!raw || !sim || !model) return;
     const spec = JSON.parse(raw) as { schemaNs: string; protocol: string; role: Role };
     const ontoNode = (e.target as HTMLElement | null)?.closest<HTMLElement>(".sim-node-group");
     const p = canvasPoint(e);
-    const n = session.nodes.length;
-    const inst = ontoNode?.dataset.nodeId
-      ? addInstance(session, spec, { nodeId: ontoNode.dataset.nodeId })
-      : addInstance(session, spec, {
+    const n = model.nodes.length;
+    const place = ontoNode?.dataset.nodeId
+      ? { ...spec, nodeId: ontoNode.dataset.nodeId }
+      : {
+          ...spec,
           x: Math.max(8, (p?.x ?? 48 + n * 34) - 75),
           y: Math.max(8, (p?.y ?? 48 + n * 30) - 26),
-        });
-    selectedId = inst.id;
+        };
+    const id = sim.add_instance(JSON.stringify(place));
+    selectedId = id;
     selectedConnId = null;
-    renderAll();
+    redraw();
   });
 
   function nodeEl(instanceId: string): HTMLElement | null {
     return canvasEl.querySelector<HTMLElement>(`.sim-node[data-id="${instanceId}"]`);
   }
-
-  function connected(id: string): boolean {
-    return !!session && connectionsFor(session, id).length > 0;
-  }
+  const connected = (id: string) => connsFor(id).length > 0;
 
   function select(id: string) {
     selectedId = id;
@@ -182,7 +243,6 @@ export function createSim(): SimView {
     renderCanvas();
     renderInspector();
   }
-
   function selectConn(connId: string) {
     selectedConnId = connId;
     selectedId = null;
@@ -192,19 +252,18 @@ export function createSim(): SimView {
 
   function renderCanvas() {
     for (const g of [...canvasEl.querySelectorAll(".sim-node-group")]) g.remove();
-    if (!session) return;
-    for (const nd of session.nodes) canvasEl.append(groupCard(nd));
-    dropHint.hidden = session.nodes.length > 0;
+    if (!model) return;
+    for (const nd of model.nodes) canvasEl.append(groupCard(nd));
+    dropHint.hidden = model.nodes.length > 0;
     drawWires();
   }
 
-  function groupCard(nd: Node): HTMLElement {
+  function groupCard(nd: ModelNode): HTMLElement {
     const g = div("sim-node-group");
     g.dataset.nodeId = nd.id;
     g.style.left = `${nd.x}px`;
     g.style.top = `${nd.y}px`;
 
-    // header — the machine's name; double-click to rename.
     const cap = div("group-cap mono");
     const count = nd.instanceIds.length > 1 ? ` · ${nd.instanceIds.length}` : "";
     cap.textContent = nd.label + count;
@@ -216,8 +275,8 @@ export function createSim(): SimView {
       input.value = nd.label;
       input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
       const commit = (save: boolean) => {
-        if (save) renameNode(session!, nd.id, input.value);
-        renderCanvas();
+        if (save && sim) sim.rename_node(nd.id, input.value);
+        redraw();
       };
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") commit(true);
@@ -231,74 +290,79 @@ export function createSim(): SimView {
     g.append(cap);
 
     for (const id of nd.instanceIds) {
-      const inst = session!.instances.find((i) => i.id === id);
-      if (inst) g.append(instRow(inst));
+      const i = inst(id);
+      if (i) g.append(instRow(i));
     }
-    // one drag handler for the whole box — grab anywhere (header, padding, a
-    // row) to move it; a press that doesn't move selects the row it landed on.
     g.addEventListener("pointerdown", (e) => startGroupDrag(e, nd, g));
     return g;
   }
 
-  function instRow(inst: Instance): HTMLElement {
-    const n = div(`sim-node role-${inst.role}`);
-    n.dataset.id = inst.id;
-    if (inst.id === selectedId) n.classList.add("selected");
-    if (connected(inst.id)) n.classList.add("wired");
+  function instRow(i: ModelInstance): HTMLElement {
+    const n = div(`sim-node role-${i.role}`);
+    n.dataset.id = i.id;
+    if (i.id === selectedId) n.classList.add("selected");
+    if (connected(i.id)) n.classList.add("wired");
 
     const name = document.createElement("div");
     name.className = "node-name";
-    name.textContent = inst.name;
+    name.textContent = i.name;
     const sub = document.createElement("div");
     sub.className = "node-sub mono";
-    sub.textContent = `${inst.protocol} · ${inst.role}`;
+    sub.textContent = `${i.protocol} · ${i.role}`;
     const port = div("node-port");
     port.title = "drag to a partner to connect";
     n.append(name, sub, port);
 
-    n.addEventListener("click", () => select(inst.id));
+    n.addEventListener("click", () => select(i.id));
     port.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
-      startConnectDrag(e, inst);
+      startConnectDrag(e, i);
     });
-    n.addEventListener("pointerenter", () => (hoverId = inst.id));
+    n.addEventListener("pointerenter", () => (hoverId = i.id));
     n.addEventListener("pointerleave", () => {
-      if (hoverId === inst.id) hoverId = null;
+      if (hoverId === i.id) hoverId = null;
     });
     return n;
   }
 
-  function startGroupDrag(e: PointerEvent, nd: Node, groupEl: HTMLElement) {
+  function startGroupDrag(e: PointerEvent, nd: ModelNode, groupEl: HTMLElement) {
     const target = e.target as HTMLElement | null;
-    if (target?.closest(".node-port")) return; // the port starts a connect drag
+    if (target?.closest(".node-port")) return;
     const rowId = target?.closest<HTMLElement>(".sim-node")?.dataset.id ?? null;
     const start = canvasPoint(e);
-    // No layout (tests): the row's own click handler does the selecting.
     if (!start) return;
     const ox = start.x - nd.x;
     const oy = start.y - nd.y;
     let moved = false;
+    let nx = nd.x;
+    let ny = nd.y;
 
     const move = (ev: PointerEvent) => {
       const p = canvasPoint(ev);
       if (!p) return;
       if (!moved && Math.hypot(p.x - start.x, p.y - start.y) < 4) return;
       moved = true;
-      moveNode(session!, nd.id, p.x - ox, p.y - oy);
-      groupEl.style.left = `${nd.x}px`;
-      groupEl.style.top = `${nd.y}px`;
+      nx = Math.max(0, Math.round(p.x - ox));
+      ny = Math.max(0, Math.round(p.y - oy));
+      groupEl.style.left = `${nx}px`;
+      groupEl.style.top = `${ny}px`;
       drawWires();
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      if (!moved && rowId) select(rowId); // a press without a drag = select that row
+      if (moved && sim) {
+        sim.move_node(nd.id, nx, ny);
+        refresh();
+      } else if (rowId) {
+        select(rowId);
+      }
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
 
-  function startConnectDrag(e: PointerEvent, from: Instance) {
+  function startConnectDrag(e: PointerEvent, from: ModelInstance) {
     hoverId = null;
     const fromRow = nodeEl(from.id);
     const a = fromRow ? center(fromRow) : { x: 0, y: 0 };
@@ -323,46 +387,45 @@ export function createSim(): SimView {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       temp.remove();
-      const target = hoverId && session ? instance(session, hoverId) : null;
+      const target = hoverId ? inst(hoverId) : null;
       if (target && target.id !== from.id) tryConnect(from, target);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
 
-  function tryConnect(a: Instance, b: Instance) {
-    if (!session) return;
+  function tryConnect(a: ModelInstance, b: ModelInstance) {
+    if (!sim) return;
     if (a.role === b.role || a.protocol !== b.protocol || a.schemaNs !== b.schemaNs) {
       flashInspectorError(`connect: ${a.protocol} needs a client and a server`);
       return;
     }
     const [clientId, serverId] = a.role === "client" ? [a.id, b.id] : [b.id, a.id];
-    let conn: Connection;
     try {
-      conn = addConnection(session, clientId, serverId);
+      sim.add_connection(clientId, serverId);
     } catch (err) {
-      flashInspectorError((err as Error).message);
+      flashInspectorError(String((err as Error).message ?? err));
       return;
     }
-    selectedId = clientId; // land on the client — its call form is the next step
+    selectedId = clientId;
     selectedConnId = null;
-    void syncWires().then(() => void conn);
+    redraw();
   }
 
   function drawWires() {
     for (const l of [...wireSvg.querySelectorAll("line")]) {
       if (!l.classList.contains("wire-drag")) l.remove();
     }
-    if (!session) return;
-    for (const conn of session.connections) {
+    if (!model || !sim) return;
+    for (const conn of model.connections) {
       const c = nodeEl(conn.clientId);
       const s = nodeEl(conn.serverId);
       if (!c || !s) continue;
       const a = center(c);
       const b = center(s);
-      const live = wires.get(conn.id);
-      let cls = live?.error || live?.dead() ? "wire-refused" : live ? "wire-live" : "wire-pending";
-      if (live && !live.error && !live.dead() && faultsActive(conn.faults)) cls = "wire-faulty";
+      const refused = !!sim.connection_error(conn.id) || sim.connection_dead(conn.id);
+      let cls = refused ? "wire-refused" : "wire-live";
+      if (!refused && faultsActive(conn.faults)) cls = "wire-faulty";
 
       const hit = document.createElementNS(SVGNS, "line");
       hit.setAttribute("class", "wire-hit");
@@ -379,12 +442,10 @@ export function createSim(): SimView {
     }
   }
 
-  /** Centre of an element in canvas coordinates — walks the offset chain, so an
-   *  instance row nested in a positioned node group still resolves. */
-  function center(el: HTMLElement) {
-    let x = el.offsetWidth / 2;
-    let y = el.offsetHeight / 2;
-    let e: HTMLElement | null = el;
+  function center(elm: HTMLElement) {
+    let x = elm.offsetWidth / 2;
+    let y = elm.offsetHeight / 2;
+    let e: HTMLElement | null = elm;
     while (e && e !== canvasEl) {
       x += e.offsetLeft;
       y += e.offsetTop;
@@ -393,68 +454,40 @@ export function createSim(): SimView {
     return { x, y };
   }
 
-  // ── wires ────────────────────────────────────────────────────────────
+  // ── frame-log sources ────────────────────────────────────────────────
   function logSources(): LogSource[] {
-    if (!session) return [];
-    return wires.all().map((lc) => {
-      const server = instance(session!, lc.serverId);
-      const found = server && findProtocol(session!.shape, server.schemaNs, server.protocol);
-      return {
-        connId: lc.connId,
-        label: `${lc.clientName}→${lc.serverName}`,
-        tap: lc.tap,
-        error: lc.error,
-        ctx: found
-          ? {
-              clientName: lc.clientName,
-              serverName: lc.serverName,
-              framing: lc.framing,
-              fnNames: found.protocol.functions.map((f) => f.name),
-            }
-          : undefined,
-      };
-    });
+    if (!model || !sim) return [];
+    return model.connections.map((conn) => ({
+      connId: conn.id,
+      label: `${inst(conn.clientId)?.name ?? conn.clientId}→${inst(conn.serverId)?.name ?? conn.serverId}`,
+      error: sim!.connection_error(conn.id) ?? null,
+    }));
   }
 
-  /** Add / drop wires to match the session, leaving the rest running. */
-  async function syncWires() {
-    if (session) await wires.sync(session);
-    flog.setSources(logSources());
-    renderCanvas();
-    renderInspector();
-  }
-
-  /** Close every wire and re-open — for a schema edit / resync / latency change. */
-  async function rebuildWires() {
-    if (session) await wires.rebuild(session);
-    flog.setSources(logSources());
-    renderCanvas();
-    renderInspector();
-  }
-
-  /** The clock / seed strip in the frame-log header. */
-  function clockBar() {
+  // ── clock bar ────────────────────────────────────────────────────────
+  function clockBar(): ClockBar {
     return {
-      mode: session?.clockMode ?? ("real" as const),
-      seed: session?.seed ?? 1,
-      clock: clock instanceof SteppedClock ? clock : null,
-      onMode: (mode: "real" | "stepped") => {
-        if (!session) return;
-        if (clock instanceof SteppedClock) clock.pause();
-        session.clockMode = mode;
-        clock = mode === "stepped" ? new SteppedClock() : new RealClock();
-        wires.clock = clock;
-        flog.setClockBar(clockBar());
-        void rebuildWires();
+      mode: model?.clockMode ?? "real",
+      seed: model?.seed ?? 1,
+      stepped: (model?.clockMode ?? "real") === "stepped",
+      now: sim?.now() ?? 0,
+      pending: sim?.pending() ?? 0,
+      playing: playHandle !== null,
+      recording: sim?.recording() ?? false,
+      hasRecording: lastRecording !== null,
+      onMode: (mode) => {
+        if (!sim) return;
+        pause();
+        sim.set_clock_mode(mode);
+        redraw();
       },
-      onSeed: (seed: number) => {
-        if (!session) return;
-        session.seed = seed;
-        void rebuildWires();
+      onSeed: (seed) => {
+        sim?.set_seed(seed);
+        redraw();
       },
       onShare: () => {
-        if (!session) return "";
-        const frag = `#s=${encodeSession(session)}`;
+        if (!sim) return "";
+        const frag = `#s=${sim.link()}`;
         try {
           const url = location.origin + location.pathname + location.search + frag;
           location.hash = frag;
@@ -464,14 +497,10 @@ export function createSim(): SimView {
           return frag;
         }
       },
-      recording: recorder.recording,
-      hasRecording: lastRecording !== null,
-      onRecord: (on: boolean) => {
-        if (on) {
-          if (session) recorder.start(session, clock.now());
-        } else {
-          lastRecording = recorder.stop();
-        }
+      onRecord: (on) => {
+        if (!sim) return;
+        if (on) sim.record_start();
+        else lastRecording = JSON.parse(sim.record_stop()) as Recording;
         flog.setClockBar(clockBar());
       },
       onReplay: () => {
@@ -489,10 +518,10 @@ export function createSim(): SimView {
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 1000);
         } catch {
-          /* no blob URL support (tests) — silently no-op */
+          /* no blob URL (tests) */
         }
       },
-      onImport: (json: string) => {
+      onImport: (json) => {
         try {
           const rec = JSON.parse(json) as Recording;
           if (rec && rec.v === 1 && Array.isArray(rec.events)) {
@@ -503,47 +532,113 @@ export function createSim(): SimView {
           flashInspectorError("import: not a recording");
         }
       },
+      onStep: () => {
+        if (!sim) return;
+        sim.step();
+        afterAdvance();
+      },
+      onPlay: () => play(),
+      onPause: () => pause(),
+      onSpeed: (x) => (speed = x),
     };
   }
 
-  let lastRecording: Recording | null = null;
+  function play() {
+    if (playHandle !== null || !sim) return;
+    playHandle = setInterval(() => {
+      if (!sim) return pause();
+      sim.advance(32 * speed);
+      afterAdvance();
+      if (sim.pending() === 0) pause();
+    }, 32);
+    flog.setClockBar(clockBar());
+  }
+  function pause() {
+    if (playHandle !== null) {
+      clearInterval(playHandle);
+      playHandle = null;
+    }
+    flog.setClockBar(clockBar());
+  }
+
+  /** Poll for settled calls + new frames after the clock moved. */
+  function afterAdvance() {
+    settlePending();
+    flog.poll();
+    flog.setClockBar(clockBar());
+  }
+
+  function errorName(throws: ThrowShape[], ordinal: number): string | undefined {
+    return throws.find((t) => t.ordinal === ordinal)?.name;
+  }
+
+  function settlePending() {
+    let wireChanged = false;
+    for (const [id, p] of [...pendingCalls]) {
+      const raw = sim?.result(id);
+      if (!raw) continue;
+      pendingCalls.delete(id);
+      const r = JSON.parse(raw) as {
+        status: string;
+        value?: unknown;
+        ordinal?: number;
+        body?: unknown;
+        message?: string;
+      };
+      p.out.className = "call-out mono";
+      if (r.status === "ok") {
+        p.out.textContent =
+          r.value === null || r.value === undefined ? "(no reply)" : JSON.stringify(r.value, null, 2);
+        p.out.classList.add("ok");
+      } else if (r.status === "err") {
+        const name = errorName(p.throws, r.ordinal ?? 0);
+        p.out.textContent = `${name ?? "error " + r.ordinal} ${JSON.stringify(r.body)}`;
+        p.out.classList.add("err");
+      } else if (r.status === "timeout") {
+        p.out.textContent = "timeout";
+        p.out.classList.add("err");
+        wireChanged = true;
+      } else {
+        p.out.textContent = r.message ?? "undecodable";
+        p.out.classList.add("err");
+      }
+    }
+    if (wireChanged) drawWires();
+  }
 
   async function replayInView(rec: Recording) {
-    if (!session) return;
-    const stepClock = new SteppedClock();
-    clock = stepClock;
-    wires.clock = stepClock;
-    const r = await replayRecording(rec, session.shape, { wires, clock: stepClock });
-    session = r.session;
+    if (!sim) return;
+    pause();
+    sim.load_replay(JSON.stringify(rec), shapeJson);
     selectedId = null;
     selectedConnId = null;
-    flog.setClockBar(clockBar());
-    flog.setSources(logSources());
+    refresh();
     renderPalette();
+    flog.setSources(logSources(), frameApi);
+    flog.setClockBar(clockBar());
     renderCanvas();
     renderInspector();
   }
 
   function disconnect(connId: string) {
-    if (!session) return;
-    removeConnection(session, connId);
+    if (!sim) return;
+    sim.remove_connection(connId);
     if (selectedConnId === connId) selectedConnId = null;
-    void syncWires();
+    redraw();
   }
 
-  /** Server / client instances of `inst`'s protocol not already wired to it. */
-  function openPartnersFor(inst: Instance): Instance[] {
-    if (!session) return [];
-    const want: Role = inst.role === "client" ? "server" : "client";
+  function openPartnersFor(i: ModelInstance): ModelInstance[] {
+    if (!model) return [];
+    const want: Role = i.role === "client" ? "server" : "client";
     const already = new Set(
-      connectionsFor(session, inst.id).map((c) => (c.clientId === inst.id ? c.serverId : c.clientId)),
+      connsFor(i.id).map((c) => (c.clientId === i.id ? c.serverId : c.clientId)),
     );
-    return session.instances.filter(
-      (i) =>
-        i.role === want &&
-        i.protocol === inst.protocol &&
-        i.schemaNs === inst.schemaNs &&
-        !already.has(i.id),
+    return model.instances.filter(
+      (x) =>
+        x.role === want &&
+        x.protocol === i.protocol &&
+        x.schemaNs === i.schemaNs &&
+        !already.has(x.id),
     );
   }
 
@@ -551,19 +646,19 @@ export function createSim(): SimView {
   function renderInspector() {
     inspectorEl.replaceChildren();
     callForm = null;
-    if (!session) return;
+    if (!model || !sim || !shape) return;
 
     if (selectedConnId) {
       renderConnInspector(selectedConnId);
       return;
     }
 
-    const sel = selectedId ? instance(session, selectedId) : undefined;
+    const sel = selectedId ? inst(selectedId) : null;
     if (!sel) {
       inspectorEl.append(muted("select an instance, or a connection"));
       return;
     }
-    const found = findProtocol(session.shape, sel.schemaNs, sel.protocol);
+    const found = findProtocol(shape, sel.schemaNs, sel.protocol);
     if (!found) {
       inspectorEl.append(muted(`${sel.protocol} is no longer compiled`));
       return;
@@ -586,35 +681,36 @@ export function createSim(): SimView {
     if (sel.irHash !== found.schema.ir_hash) {
       inspectorEl.append(
         button("resync — schema changed", "danger", () => {
-          resyncInstance(session!, sel.id);
-          void rebuildWires();
+          sim!.resync_instance(sel.id);
+          redraw();
         }),
       );
     }
 
     inspectorEl.append(
       button("remove instance", "danger", () => {
-        removeInstance(session!, sel.id);
+        sim!.remove_instance(sel.id);
         if (selectedId === sel.id) selectedId = null;
-        void syncWires();
+        redraw();
       }),
     );
 
     // ── this box (add a second instance → a gateway) ──
-    const nd = session.nodes.find((x) => x.id === sel.nodeId);
+    const nd = node(sel.nodeId);
     if (nd) {
       inspectorEl.append(section(`box · ${nd.label}`));
       if (nd.instanceIds.length > 1) {
         inspectorEl.append(
-          muted(`${nd.instanceIds.length} instances: ` + nd.instanceIds
-            .map((id) => instance(session!, id)?.name ?? id)
-            .join(", ")),
+          muted(
+            `${nd.instanceIds.length} instances: ` +
+              nd.instanceIds.map((id) => inst(id)?.name ?? id).join(", "),
+          ),
         );
       }
       const addSel = document.createElement("select");
       addSel.className = "add-inst-sel";
       addSel.append(opt("", "+ add instance to this box…", true));
-      for (const schema of session.shape.schemas) {
+      for (const schema of shape.schemas) {
         for (const p of schema.protocols) {
           for (const role of ["server", "client"] as Role[]) {
             addSel.append(opt(`${schema.namespace}|${p.name}|${role}`, `${p.name} · ${role}`));
@@ -625,33 +721,35 @@ export function createSim(): SimView {
         const v = selValue(addSel);
         if (!v) return;
         const [schemaNs, protocol, role] = v.split("|");
-        const inst = addInstance(session!, { schemaNs, protocol, role: role as Role }, { nodeId: nd.id });
-        selectedId = inst.id;
-        void syncWires();
-        renderAll();
+        const id = sim!.add_instance(
+          JSON.stringify({ schemaNs, protocol, role, nodeId: nd.id }),
+        );
+        selectedId = id;
+        redraw();
       });
       inspectorEl.append(row("add", addSel));
     }
 
     // ── connections ──
     inspectorEl.append(section("connections"));
-    const conns = connectionsFor(session, sel.id);
+    const conns = connsFor(sel.id);
     if (conns.length === 0) inspectorEl.append(muted("none"));
     for (const conn of conns) {
       const otherId = conn.clientId === sel.id ? conn.serverId : conn.clientId;
-      const other = instance(session, otherId);
-      const lc = wires.get(conn.id);
+      const other = inst(otherId);
+      const err = sim.connection_error(conn.id);
+      const dead = sim.connection_dead(conn.id);
       const r = div("conn-row");
-      const bad = lc?.error || lc?.dead();
+      const bad = !!err || dead;
       const dot = document.createElement("span");
-      dot.className = `conn-dot ${bad ? "err" : lc ? "ok" : ""}`;
+      dot.className = `conn-dot ${bad ? "err" : "ok"}`;
       dot.textContent = "●";
       const name = document.createElement("button");
       name.className = "conn-name";
       name.textContent = `${conn.clientId === sel.id ? "→" : "←"} ${other?.name ?? otherId}`;
-      name.title = lc?.error
-        ? `refused · ${lc.error}`
-        : lc?.dead()
+      name.title = err
+        ? `refused · ${err}`
+        : dead
           ? "timed out"
           : faultsActive(conn.faults)
             ? "faults active"
@@ -664,7 +762,7 @@ export function createSim(): SimView {
       x.addEventListener("click", () => disconnect(conn.id));
       r.append(dot, name, x);
       inspectorEl.append(r);
-      if (lc?.error) inspectorEl.append(muted(`connection refused · ${lc.error}`, "err"));
+      if (err) inspectorEl.append(muted(`connection refused · ${err}`, "err"));
     }
     const open = openPartnersFor(sel);
     if (open.length) {
@@ -674,9 +772,8 @@ export function createSim(): SimView {
       for (const p of open) addSel.append(opt(p.id, p.name));
       addSel.addEventListener("change", () => {
         const otherId = selValue(addSel);
-        if (!otherId) return;
-        const other = instance(session!, otherId)!;
-        tryConnect(sel, other);
+        const other = otherId ? inst(otherId) : null;
+        if (other) tryConnect(sel, other);
       });
       inspectorEl.append(row("add", addSel));
     }
@@ -685,11 +782,11 @@ export function createSim(): SimView {
     latency.type = "number";
     latency.min = "0";
     latency.step = "10";
-    latency.value = String(session.latencyMs);
+    latency.value = String(model.latencyMs);
     latency.title = "applies to every connection";
     latency.addEventListener("change", () => {
-      session!.latencyMs = Math.max(0, Number(latency.value) || 0);
-      void rebuildWires();
+      sim!.set_latency(Math.max(0, Number(latency.value) || 0));
+      redraw();
     });
     inspectorEl.append(row("latency ms", latency));
 
@@ -697,15 +794,14 @@ export function createSim(): SimView {
     timeout.type = "number";
     timeout.min = "0";
     timeout.step = "100";
-    timeout.value = String(session.callTimeoutMs);
-    timeout.title = "how long a client waits before RuntimeError(timeout); 0 = forever";
+    timeout.value = String(model.callTimeoutMs);
+    timeout.title = "how long a client waits before a timeout; 0 = forever";
     timeout.addEventListener("change", () => {
-      session!.callTimeoutMs = Math.max(0, Number(timeout.value) || 0);
-      void rebuildWires();
+      sim!.set_call_timeout(Math.max(0, Number(timeout.value) || 0));
+      redraw();
     });
     inspectorEl.append(row("call timeout ms", timeout));
 
-    // server: per-function behaviours
     if (sel.role === "server") {
       inspectorEl.append(section("behaviours"));
       for (const fn of found.protocol.functions) {
@@ -713,35 +809,43 @@ export function createSim(): SimView {
       }
     }
 
-    // client with at least one live connection: the call form
-    if (sel.role === "client" && wires.forInstance(sel.id).some((lc) => !lc.error)) {
+    if (sel.role === "client" && connsFor(sel.id).some((c) => live(c.id))) {
       inspectorEl.append(renderCallForm(sel));
     }
   }
 
   function renderConnInspector(connId: string) {
-    const conn = session!.connections.find((c) => c.id === connId);
-    if (!conn) {
+    const conn = model!.connections.find((c) => c.id === connId);
+    if (!conn || !sim) {
       selectedConnId = null;
       inspectorEl.append(muted("connection is gone"));
       return;
     }
-    const client = instance(session!, conn.clientId);
-    const server = instance(session!, conn.serverId);
-    const lc = wires.get(conn.id);
+    const client = inst(conn.clientId);
+    const server = inst(conn.serverId);
+    const err = sim.connection_error(conn.id);
+    const dead = sim.connection_dead(conn.id);
+    const framing = conn.framing === "auto"
+      ? findProtocol(shape!, server?.schemaNs ?? "", server?.protocol ?? "")?.protocol.framing ?? "?"
+      : conn.framing;
     inspectorEl.append(
       facts([
         ["client", client?.name ?? conn.clientId],
         ["server", server?.name ?? conn.serverId],
-        ["framing", lc?.framing ?? "?"],
-        ["status", lc?.error ? `refused · ${lc.error}` : lc ? "live" : "…"],
+        ["framing", framing],
+        ["status", err ? `refused · ${err}` : dead ? "timed out" : "live"],
       ]),
     );
-    if (lc?.error) inspectorEl.append(muted(`connection refused · ${lc.error}`, "err"));
-    else if (lc?.dead()) {
+    if (err) inspectorEl.append(muted(`connection refused · ${err}`, "err"));
+    else if (dead) {
       inspectorEl.append(muted("timed out — the client is desynced", "err"));
-      inspectorEl.append(button("reconnect", "primary", () => void rebuildWires()));
-    } else if (lc) inspectorEl.append(muted("● live", "ok"));
+      inspectorEl.append(
+        button("reconnect", "primary", () => {
+          sim!.set_seed(model!.seed); // no-op knob that forces an engine rebuild
+          redraw();
+        }),
+      );
+    } else inspectorEl.append(muted("● live", "ok"));
 
     inspectorEl.append(section("faults"));
     inspectorEl.append(faultControls(conn));
@@ -752,15 +856,15 @@ export function createSim(): SimView {
     );
   }
 
-  /** Live sliders / toggles for one connection's `FaultSpec`. Edits mutate the
-   *  spec in place — both transports hold the same object — so they take effect
-   *  on the next frame; the edge colour follows immediately. */
-  function faultControls(conn: Connection): HTMLElement {
+  /** Live sliders / toggles for one connection's faults. Each edit pushes the
+   *  whole spec to `sim.set_faults`; it takes effect on the next frame. */
+  function faultControls(conn: ModelConn): HTMLElement {
     const wrap = div("fault-ctls");
-    const f = conn.faults;
+    const f = { ...conn.faults };
     const touched = () => {
+      sim?.set_faults(conn.id, JSON.stringify(f));
+      refresh();
       drawWires();
-      capture({ kind: "fault", connId: conn.id, faults: { ...f } });
     };
 
     const pct = (label: string, get: () => number, set: (v: number) => void) => {
@@ -808,7 +912,7 @@ export function createSim(): SimView {
       applyTo.append(opt(v, v, v === f.applyTo));
     }
     applyTo.addEventListener("change", () => {
-      f.applyTo = selValue(applyTo) as typeof f.applyTo;
+      f.applyTo = selValue(applyTo) as Faults["applyTo"];
       touched();
     });
 
@@ -837,10 +941,15 @@ export function createSim(): SimView {
     return wrap;
   }
 
-  function behaviorRow(inst: Instance, fnName: string): HTMLElement {
-    const found = findProtocol(session!.shape, inst.schemaNs, inst.protocol)!;
-    const fn = found.protocol.functions.find((f) => f.name === fnName)!;
-    const setting = inst.behaviors[fnName];
+  function behaviorRow(i: ModelInstance, fnName: string): HTMLElement {
+    const setting = () => inst(i.id)?.behaviors[fnName] ?? { kind: "reply", config: {} };
+    const catalog = (
+      JSON.parse(sim!.behavior_catalog(i.schemaNs, i.protocol, fnName)) as {
+        kind: string;
+        label: string;
+        applies: boolean;
+      }[]
+    ).filter((e) => e.applies && e.kind !== "script"); // TODO: lazy-load the scripted wasm
 
     const wrap = div("behavior-row");
     const head = div("behavior-head");
@@ -849,39 +958,30 @@ export function createSim(): SimView {
     name.textContent = fnName;
     const sel = document.createElement("select");
     sel.className = "behavior-kind";
-    for (const kind of BEHAVIOR_KINDS) {
-      if (!BEHAVIORS[kind].appliesTo(fn)) continue;
-      sel.append(opt(kind, BEHAVIORS[kind].label, kind === setting.kind));
-    }
+    for (const e of catalog) sel.append(opt(e.kind, e.label, e.kind === setting().kind));
     head.append(name, sel);
     wrap.append(head);
-
-    const applyLive = () => {
-      capture({ kind: "behavior", instanceId: inst.id, fn: fnName, setting: inst.behaviors[fnName] });
-      for (const lc of wires.forInstance(inst.id)) {
-        if (!lc.error) lc.setBehavior(fnName, inst.behaviors[fnName]);
-      }
-    };
 
     const cfgHost = div("behavior-cfg-host");
     wrap.append(cfgHost);
 
     const renderConfig = () => {
       cfgHost.replaceChildren();
-      if (inst.behaviors[fnName].kind === "forward") {
-        cfgHost.append(forwardConfig(inst, fnName, applyLive));
+      if (setting().kind === "forward") {
+        cfgHost.append(forwardConfig(i, fnName));
         return;
       }
       const cfg = document.createElement("textarea");
       cfg.className = "behavior-config mono";
       cfg.rows = 3;
       cfg.spellcheck = false;
-      cfg.value = JSON.stringify(inst.behaviors[fnName].config, null, 1);
+      cfg.value = JSON.stringify(setting().config, null, 1);
       cfg.addEventListener("change", () => {
         try {
-          inst.behaviors[fnName].config = JSON.parse(cfg.value || "{}") as Record<string, unknown>;
+          JSON.parse(cfg.value || "{}");
           cfg.classList.remove("bad");
-          applyLive();
+          sim!.set_behavior(i.id, fnName, setting().kind, cfg.value || "{}");
+          refresh();
         } catch {
           cfg.classList.add("bad");
         }
@@ -890,81 +990,86 @@ export function createSim(): SimView {
     };
 
     sel.addEventListener("change", () => {
-      setBehavior(session!, inst.id, fnName, selValue(sel) as BehaviorKind);
+      sim!.set_behavior(i.id, fnName, selValue(sel), "{}"); // config defaults engine-side
+      refresh();
       renderConfig();
-      applyLive();
+      redrawSoft();
     });
     renderConfig();
     return wrap;
   }
 
-  /** The two-select editor for a `Forward` behaviour: which connection to relay
-   *  over, and which function to call on it. */
-  function forwardConfig(inst: Instance, fnName: string, applyLive: () => void): HTMLElement {
+  /** The two-select editor for a `Forward` behaviour. */
+  function forwardConfig(i: ModelInstance, fnName: string): HTMLElement {
     const wrap = div("forward-cfg");
-    const cfg = inst.behaviors[fnName].config as { viaConnectionId?: string; targetFn?: string };
+    const cfg = () =>
+      (inst(i.id)?.behaviors[fnName]?.config ?? {}) as { viaConnectionId?: string; targetFn?: string };
+    const push = (next: { viaConnectionId?: string; targetFn?: string }) => {
+      sim!.set_behavior(i.id, fnName, "forward", JSON.stringify({ ...cfg(), ...next }));
+      refresh();
+    };
 
     const viaSel = document.createElement("select");
     viaSel.className = "forward-via";
-    viaSel.append(opt("", "via connection…", !cfg.viaConnectionId));
-    for (const conn of session!.connections) {
-      const c = instance(session!, conn.clientId);
-      const s = instance(session!, conn.serverId);
+    viaSel.append(opt("", "via connection…", !cfg().viaConnectionId));
+    for (const conn of model!.connections) {
+      const c = inst(conn.clientId);
+      const s = inst(conn.serverId);
       viaSel.append(
-        opt(conn.id, `${c?.name ?? conn.clientId} → ${s?.name ?? conn.serverId}`, conn.id === cfg.viaConnectionId),
+        opt(
+          conn.id,
+          `${c?.name ?? conn.clientId} → ${s?.name ?? conn.serverId}`,
+          conn.id === cfg().viaConnectionId,
+        ),
       );
     }
 
     const fnHost = div("forward-fn-host");
     const renderFnSel = () => {
       fnHost.replaceChildren();
-      const conn = session!.connections.find((x) => x.id === selValue(viaSel));
-      const s = conn && instance(session!, conn.serverId);
-      const found = s && findProtocol(session!.shape, s.schemaNs, s.protocol);
+      const conn = model!.connections.find((x) => x.id === selValue(viaSel));
+      const s = conn && inst(conn.serverId);
+      const found = s && findProtocol(shape!, s.schemaNs, s.protocol);
       if (!found) return;
       const fnSel = document.createElement("select");
       fnSel.className = "forward-fn";
-      found.protocol.functions.forEach((f, i) =>
-        fnSel.append(opt(f.name, f.name, f.name === cfg.targetFn || (i === 0 && !cfg.targetFn))),
+      found.protocol.functions.forEach((f, idx) =>
+        fnSel.append(opt(f.name, f.name, f.name === cfg().targetFn || (idx === 0 && !cfg().targetFn))),
       );
-      fnSel.addEventListener("change", () => {
-        cfg.targetFn = selValue(fnSel);
-        applyLive();
-      });
-      cfg.targetFn ??= found.protocol.functions[0]?.name;
+      fnSel.addEventListener("change", () => push({ targetFn: selValue(fnSel) }));
+      if (!cfg().targetFn) push({ targetFn: found.protocol.functions[0]?.name });
       fnHost.append(row("fn", fnSel));
     };
 
     viaSel.addEventListener("change", () => {
-      cfg.viaConnectionId = selValue(viaSel);
+      push({ viaConnectionId: selValue(viaSel) });
       renderFnSel();
-      applyLive();
     });
     renderFnSel();
     wrap.append(row("via", viaSel), fnHost);
     return wrap;
   }
 
-  function renderCallForm(inst: Instance): HTMLElement {
-    const found = findProtocol(session!.shape, inst.schemaNs, inst.protocol)!;
+  function renderCallForm(i: ModelInstance): HTMLElement {
+    const found = findProtocol(shape!, i.schemaNs, i.protocol)!;
     const wrap = div("call-form");
     wrap.append(section("call"));
 
-    // pick which connection to call over, when the client has more than one
-    const liveConns = wires.forInstance(inst.id).filter((lc) => !lc.error);
+    const liveConns = connsFor(i.id).filter((c) => live(c.id));
     let connSel: HTMLSelectElement | null = null;
     if (liveConns.length > 1) {
       connSel = document.createElement("select");
       connSel.className = "call-conn";
-      liveConns.forEach((lc, i) => connSel!.append(opt(lc.connId, `→ ${lc.serverName}`, i === 0)));
+      liveConns.forEach((c, idx) =>
+        connSel!.append(opt(c.id, `→ ${inst(c.serverId)?.name ?? c.serverId}`, idx === 0)),
+      );
       wrap.append(row("via", connSel));
     }
-    const pickLive = () =>
-      connSel ? wires.get(selValue(connSel)) ?? liveConns[0] : liveConns[0];
+    const pickConn = () => (connSel ? selValue(connSel) || liveConns[0]?.id : liveConns[0]?.id);
 
     const fnSel = document.createElement("select");
     fnSel.className = "call-fn";
-    found.protocol.functions.forEach((fn, i) => fnSel.append(opt(fn.name, fn.name, i === 0)));
+    found.protocol.functions.forEach((fn, idx) => fnSel.append(opt(fn.name, fn.name, idx === 0)));
     wrap.append(row("fn", fnSel));
 
     const formHost = div("call-args");
@@ -973,9 +1078,9 @@ export function createSim(): SimView {
     const out = div("call-out mono");
     wrap.append(out);
 
-    const send = button("send", "primary", async () => {
-      const lc = pickLive();
-      if (!callForm || !lc) return;
+    const send = button("send", "primary", () => {
+      const connId = pickConn();
+      if (!callForm || !connId || !sim) return;
       out.className = "call-out mono";
       let params: unknown;
       try {
@@ -985,21 +1090,20 @@ export function createSim(): SimView {
         out.classList.add("err");
         return;
       }
-      out.textContent = "…";
       const fnName = selValue(fnSel);
-      capture({ kind: "call", connId: lc.connId, fn: fnName, params });
+      const fn = found.protocol.functions.find((f) => f.name === fnName)!;
+      out.textContent = "…";
+      let id: number;
       try {
-        const res = await lc.call(fnName, params);
-        out.textContent = res === undefined ? "(no reply)" : JSON.stringify(res, null, 2);
-        out.classList.add("ok");
+        id = sim.call(connId, fnName, JSON.stringify(params));
       } catch (e) {
-        if (e instanceof SimRemoteError) {
-          out.textContent = `${e.errorName ?? "error " + e.ordinal} ${JSON.stringify(e.data)}`;
-        } else {
-          out.textContent = (e as Error).message;
-        }
+        out.textContent = String((e as Error).message ?? e);
         out.classList.add("err");
+        return;
       }
+      pendingCalls.set(id, { out, throws: fn.throws });
+      if (clockMode === "real") sim.run();
+      afterAdvance();
     });
     wrap.append(send);
 
@@ -1022,47 +1126,56 @@ export function createSim(): SimView {
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────
-  function renderAll() {
-    renderPalette();
+  /** Full re-render: model, frame-log sources (clears the list), canvas,
+   *  inspector, clock bar. */
+  function redraw() {
+    refresh();
+    if (selectedId && !inst(selectedId)) selectedId = null;
+    if (selectedConnId && !model?.connections.some((c) => c.id === selectedConnId)) {
+      selectedConnId = null;
+    }
+    flog.setSources(logSources(), frameApi);
+    flog.setClockBar(clockBar());
     renderCanvas();
     renderInspector();
+  }
+  /** Like `redraw` but keeps the frame-log list (a behaviour edit doesn't
+   *  reset the wire). */
+  function redrawSoft() {
+    refresh();
+    renderCanvas();
+    renderInspector();
+    flog.setClockBar(clockBar());
   }
 
   return {
     el,
-    setShape(shape, serialized) {
-      const restored = serialized ? decodeSession(serialized, shape) : null;
-      if (restored) {
-        session = restored;
-        selectedId = null;
-        selectedConnId = null;
-      } else if (!session) {
-        session = emptySession(shape);
-      } else {
-        rebuild(session, shape);
+    setShape(shapeObj, serialized) {
+      shape = shapeObj;
+      shapeJson = JSON.stringify(shapeObj);
+      try {
+        if (serialized) sim = new Sim(shapeJson, serialized);
+        else if (!sim) sim = new Sim(shapeJson);
+        else sim.set_shape(shapeJson);
+      } catch {
+        sim = new Sim(shapeJson);
       }
-      if (selectedId && !instance(session, selectedId)) selectedId = null;
-      if (selectedConnId && !session.connections.some((c) => c.id === selectedConnId)) {
-        selectedConnId = null;
-      }
-      if (session.clockMode === "stepped" && !(clock instanceof SteppedClock)) {
-        clock = new SteppedClock();
-      }
-      wires.clock = clock;
-      flog.setClockBar(clockBar());
+      selectedId = null;
+      selectedConnId = null;
       renderPalette();
-      void rebuildWires(); // re-handshake every wire against the new shape
+      redraw();
     },
     serialize() {
-      return session ? encodeSession(session) : "";
+      return sim ? sim.link() : "";
     },
     record(on) {
+      if (!sim) return null;
       if (on) {
-        if (session) recorder.start(session, clock.now());
+        sim.record_start();
         flog.setClockBar(clockBar());
         return null;
       }
-      lastRecording = recorder.stop();
+      lastRecording = JSON.parse(sim.record_stop()) as Recording;
       flog.setClockBar(clockBar());
       return lastRecording;
     },
@@ -1071,9 +1184,10 @@ export function createSim(): SimView {
       await replayInView(rec);
     },
     destroy() {
+      pause();
       window.removeEventListener("resize", onResize);
-      if (clock instanceof SteppedClock) clock.pause();
-      wires.closeAll();
+      sim?.free();
+      sim = null;
     },
   };
 }
@@ -1130,7 +1244,6 @@ function button(text: string, variant: string, onClick: () => void): HTMLButtonE
   b.addEventListener("click", onClick);
   return b;
 }
-/** The chosen value — resilient to a DOM where `<select>.value` isn't populated. */
 function selValue(sel: HTMLSelectElement): string {
   return (
     sel.value ||

@@ -1,31 +1,59 @@
-/// The frame inspector under the canvas. It merges the taps of every live
+/// The frame inspector under the canvas. It merges the frame logs of every live
 /// connection into one time-ordered list — a row per frame: connection (when
 /// there is more than one), direction, kind, function, round-trip time (on the
-/// reply, measured from its own request by id — not wall-clock gap, which is
-/// mostly idle time), byte length — expanding to the decoded envelope, the raw
-/// hex, and the framing name. A wall-clock gap over `IDLE_MS` inserts an `idle`
-/// separator. Every row kind — handshake / request / response / idle — and
-/// every connection is filterable from the header. A refused connection gets
-/// its own row.
+/// reply, from its own request by id), byte length — expanding to the decoded
+/// envelope, the raw hex, and the framing name. A gap in *virtual* time over
+/// `IDLE_MS` inserts an `idle` separator. Every row kind and every connection is
+/// filterable from the header. A refused connection gets its own row.
+///
+/// The engine is the `comline-simulator` wasm now: frames are polled from the
+/// `Sim`, not pushed from a `Tap`. The view calls `poll()` after it advances the
+/// clock.
 
-import type { SteppedClock } from "../clock.ts";
-import { describeFrame, toHex, type DecodeCtx } from "../framedecode.ts";
-import type { Frame, Tap } from "../transport.ts";
+/** One decoded frame, as the `Sim` returns it. */
+export interface Frame {
+  seq: number;
+  from: string;
+  to: string;
+  bytes: number[];
+  at: number;
+  kind: "handshake" | "request" | "response";
+  fault?: string | null;
+}
+
+/** `Sim.describe_frame` output. */
+export interface FrameDetail {
+  kind: "handshake" | "request" | "response" | "unknown";
+  framing: string;
+  fn?: string;
+  requestId?: string;
+  params?: unknown;
+  ok?: unknown;
+  err?: { ordinal: number; body: unknown };
+  handshake?: { irHash: string; wireFormat: string; framing: string; caps: number };
+}
 
 export interface LogSource {
   connId: string;
   /** Short label for the connection column / filter, e.g. `chat-2→chat-1`. */
   label: string;
-  tap: Tap;
-  ctx?: DecodeCtx;
   error?: string | null;
+}
+
+/** How the log reads frames — a thin view over the `Sim`. */
+export interface FrameSource {
+  frames(connId: string): Frame[];
+  detail(connId: string, seq: number): FrameDetail | null;
 }
 
 export interface ClockBar {
   mode: "real" | "stepped";
   seed: number;
-  /** Present only in stepped mode. */
-  clock: SteppedClock | null;
+  /** Stepped mode only — the step / play controls show when true. */
+  stepped: boolean;
+  now: number;
+  pending: number;
+  playing: boolean;
   recording: boolean;
   hasRecording: boolean;
   onMode(mode: "real" | "stepped"): void;
@@ -36,12 +64,18 @@ export interface ClockBar {
   onReplay(): void;
   onExport(): void;
   onImport(json: string): void;
+  onStep(): void;
+  onPlay(): void;
+  onPause(): void;
+  onSpeed(x: number): void;
 }
 
 export interface FrameLog {
   el: HTMLElement;
   /** Replace the set of connections being logged. Clears and re-renders. */
-  setSources(sources: LogSource[]): void;
+  setSources(sources: LogSource[], source: FrameSource): void;
+  /** Re-read every source and append rows for frames not shown yet. */
+  poll(): void;
   /** Render the clock / seed controls in the header. */
   setClockBar(bar: ClockBar): void;
 }
@@ -57,8 +91,8 @@ export function frameLog(): FrameLog {
   const title = document.createElement("span");
   title.textContent = "frames";
 
-  const hidden = new Set<string>(); // hidden row kinds
-  const hiddenConns = new Set<string>(); // hidden connection ids
+  const hidden = new Set<string>();
+  const hiddenConns = new Set<string>();
 
   const kindFilters = document.createElement("div");
   kindFilters.className = "frame-filters";
@@ -80,7 +114,6 @@ export function frameLog(): FrameLog {
 
   const clockBar = document.createElement("div");
   clockBar.className = "clock-bar";
-  let clockUnsub: (() => void) | null = null;
 
   const clear = document.createElement("button");
   clear.className = "icon-btn";
@@ -92,9 +125,9 @@ export function frameLog(): FrameLog {
   el.append(head, list);
 
   let sources: LogSource[] = [];
-  const unsubs: (() => void)[] = [];
-  const ctxByConn = new Map<string, DecodeCtx | undefined>();
+  let api: FrameSource = { frames: () => [], detail: () => null };
   const labelByConn = new Map<string, string>();
+  const shownByConn = new Map<string, number>(); // connId → count of frames rendered
   const sentAt = new Map<string, number>(); // `${connId}:${requestId}` → sent-at
   let lastAt: number | null = null;
   let multi = false;
@@ -124,8 +157,7 @@ export function frameLog(): FrameLog {
   }
 
   function addRow(connId: string, f: Frame) {
-    const ctx = ctxByConn.get(connId);
-    const detail = ctx ? describeFrame(f, ctx) : { kind: f.kind, framing: "?" };
+    const detail = api.detail(connId, f.seq) ?? { kind: f.kind, framing: "?" };
 
     if (lastAt !== null && f.at - lastAt > IDLE_MS) {
       const sep = document.createElement("div");
@@ -213,31 +245,24 @@ export function frameLog(): FrameLog {
     list.append(r);
   }
 
-  function teardown() {
-    for (const u of unsubs.splice(0)) u();
+  function resetList() {
     sentAt.clear();
+    shownByConn.clear();
     lastAt = null;
     list.replaceChildren();
   }
 
-  clear.addEventListener("click", () => {
-    sentAt.clear();
-    lastAt = null;
-    list.replaceChildren();
-  });
+  clear.addEventListener("click", resetList);
 
   return {
     el,
-    setSources(next) {
-      teardown();
+    setSources(next, next_api) {
+      resetList();
       sources = next;
+      api = next_api;
       multi = next.length > 1;
-      ctxByConn.clear();
       labelByConn.clear();
-      for (const s of next) {
-        ctxByConn.set(s.connId, s.ctx);
-        labelByConn.set(s.connId, s.label);
-      }
+      for (const s of next) labelByConn.set(s.connId, s.label);
       renderConnFilters();
 
       if (next.length === 0) {
@@ -247,19 +272,22 @@ export function frameLog(): FrameLog {
         list.append(p);
         return;
       }
-
-      // backfill: every source's existing frames, merge-sorted by arrival
-      const backlog = next
-        .flatMap((s) => s.tap.frames.map((f) => ({ connId: s.connId, f })))
-        .sort((a, b) => a.f.at - b.f.at);
-      for (const { connId, f } of backlog) addRow(connId, f);
+      this.poll();
       for (const s of next) if (s.error) refusedRow(s.connId, s.error);
-
-      for (const s of next) unsubs.push(s.tap.on((f) => addRow(s.connId, f)));
+    },
+    poll() {
+      // gather every source's un-shown frames, merge-sort by arrival time
+      const fresh: { connId: string; f: Frame }[] = [];
+      for (const s of sources) {
+        const all = api.frames(s.connId);
+        const from = shownByConn.get(s.connId) ?? 0;
+        for (let i = from; i < all.length; i++) fresh.push({ connId: s.connId, f: all[i] });
+        shownByConn.set(s.connId, all.length);
+      }
+      fresh.sort((a, b) => a.f.at - b.f.at);
+      for (const { connId, f } of fresh) addRow(connId, f);
     },
     setClockBar(bar) {
-      clockUnsub?.();
-      clockUnsub = null;
       clockBar.replaceChildren();
 
       const mkBtn = (text: string, on: () => void) => {
@@ -279,9 +307,7 @@ export function frameLog(): FrameLog {
         o.selected = m === bar.mode;
         mode.append(o);
       }
-      mode.addEventListener("change", () =>
-        bar.onMode((mode.value || "real") as "real" | "stepped"),
-      );
+      mode.addEventListener("change", () => bar.onMode((mode.value || "real") as "real" | "stepped"));
       clockBar.append(mode);
 
       const seed = document.createElement("input");
@@ -327,11 +353,11 @@ export function frameLog(): FrameLog {
       imp.append(file);
       clockBar.append(imp);
 
-      const c = bar.clock;
-      if (!c) return;
+      if (!bar.stepped) return;
 
-      const step = mkBtn("⏭", () => c.step());
-      const play = mkBtn(c.playing ? "⏸" : "▶", () => (c.playing ? c.pause() : c.play(speedOf())));
+      const step = mkBtn("⏭", () => bar.onStep());
+      step.disabled = bar.pending === 0;
+      const play = mkBtn(bar.playing ? "⏸" : "▶", () => (bar.playing ? bar.onPause() : bar.onPlay()));
       const speed = document.createElement("select");
       speed.className = "clock-speed";
       for (const s of ["1", "4", "16"]) {
@@ -340,20 +366,12 @@ export function frameLog(): FrameLog {
         o.textContent = `${s}×`;
         speed.append(o);
       }
-      const speedOf = () => Number(speed.value) || 1;
-      speed.addEventListener("change", () => {
-        if (c.playing) c.play(speedOf());
-      });
+      speed.addEventListener("change", () => bar.onSpeed(Number(speed.value) || 1));
       const queued = document.createElement("span");
       queued.className = "clock-queued mono";
-
-      const paint = () => {
-        play.textContent = c.playing ? "⏸" : "▶";
-        step.disabled = c.pending() === 0;
-        queued.textContent = c.pending() ? `${c.pending()} queued · t=${Math.round(c.now())}` : "";
-      };
-      paint();
-      clockUnsub = c.onChange(paint);
+      queued.textContent = bar.pending
+        ? `${bar.pending} queued · t=${Math.round(bar.now)}`
+        : "";
       clockBar.append(step, play, speed, queued);
     },
   };
@@ -364,6 +382,10 @@ function humanGap(ms: number): string {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+}
+
+function toHex(bytes: number[]): string {
+  return bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ");
 }
 
 function cell(cls: string, text: string): HTMLSpanElement {
