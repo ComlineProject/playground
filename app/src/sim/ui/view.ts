@@ -718,8 +718,9 @@ export function createSim(opts: SimOpts = {}): SimView {
     }
 
     inspectorEl.append(
+      section("instance"),
       facts([
-        ["instance", sel.name],
+        ["name", sel.name],
         ["protocol", sel.protocol],
         ["role", sel.role],
         ["framing", found.protocol.framing],

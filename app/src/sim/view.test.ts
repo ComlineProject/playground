@@ -537,7 +537,7 @@ test("2b — each instance in a shared box is individually selectable", async ()
       (r) => r.querySelector(".node-name")!.textContent === target,
     )!;
     fire(row, "click");
-    assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, new RegExp(`instance\\s*${target}`));
+    assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, new RegExp(`name\\s*${target}`));
     const selected = [...sim.el.querySelectorAll(".sim-node-group .sim-node.selected")];
     assert.equal(selected.length, 1, "exactly one row is marked selected");
     assert.equal(selected[0].querySelector(".node-name")!.textContent, target);
