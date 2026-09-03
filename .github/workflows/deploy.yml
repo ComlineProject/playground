@@ -54,7 +54,7 @@ jobs:
         working-directory: app
         run: npm install
 
-      - name: Test (sim wire + drift guard)
+      - name: Test (simulate view)
         working-directory: app
         run: npm test
 

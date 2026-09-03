@@ -10,16 +10,22 @@ Static — deploys to GitHub Pages, no server.
 ## Layout
 
 ```
-wasm/   comline-playground-wasm — the Rust crate, wasm-bindgen surface
-          compile(source)                -> { ok, diagnostics, ir, units }
-          generate(source, target, mode) -> { files, error }
-          semantic_tokens / hover / completions   — the LSP handlers verbatim
-        deps: comline-core, comline-codegen, comline-codegen-rust,
-              comline-codegen-typescript, comline-language-server (git rev)
-app/    a Vite site; a CodeMirror 6 editor whose highlighting, diagnostics,
-        hover and autocomplete are all fed from the WASM (i.e. the LSP).
-        The WASM runs in a Web Worker.
-.github/workflows/deploy.yml   build WASM → build site → deploy to Pages
+wasm/     comline-playground-wasm — the editor's Rust crate, wasm-bindgen surface
+            compile(source)                -> { ok, diagnostics, ir, units }
+            generate(source, target, mode) -> { files, error }
+            describe_project(files)        -> the schema shape the sim runs on
+            semantic_tokens / hover / completions   — the LSP handlers verbatim
+          deps: comline-core, comline-codegen, comline-codegen-rust,
+                comline-codegen-typescript, comline-language-server (git rev)
+sim-wasm/ a thin wrapper that re-exports ComlineProject/simulator's `Sim`
+          surface (git rev). `npm run sim-wasm` builds it lean; the scripted
+          build (`sim-wasm:script`) is lazy-loaded by the UI.
+app/      a Vite site: a CodeMirror 6 editor (highlighting / diagnostics /
+          hover / autocomplete all from the editor WASM's LSP, in a Web
+          Worker), plus the **simulate** view — a thin canvas / inspector /
+          frame-log over the sim WASM. `app/src/sim/` is that view; the engine
+          it drives lives in ComlineProject/simulator.
+.github/workflows/deploy.yml   build both WASMs → build site → deploy to Pages
 ```
 
 ## Develop
@@ -39,12 +45,14 @@ Push to `master`. The workflow builds the WASM with `wasm-pack`, builds the site
 with Vite (`base: "./"`, so it works under `/<repo>/`), and publishes `app/dist`
 to Pages. Enable Pages → "GitHub Actions" in the repo settings once.
 
-## Scope (v1)
+## Scope
 
-One schema, namespace `main`; `code` and `lib` modes; `rust` and `typescript`
-targets. Multi-file packages, config (`config.idp` / `comline.toml`) input, a
-runtime demo, and docs embedding are follow-ups — see `ComlineProject/docs` →
-Design → *Playground & tutorial*.
+The editor: one schema, namespace `main`; `code` and `lib` modes; `rust` and
+`typescript` targets. The simulate view: many instances / connections, fault
+injection, a virtual clock, forwarding gateways, record & replay, the framing /
+codec matrix, and user-scripted behaviours (Rhai). Multi-file packages, config
+(`config.idp` / `comline.toml`) input, and docs embedding are follow-ups — see
+`ComlineProject/docs` → Design → *Playground simulation*.
 
 ## License
 
