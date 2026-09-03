@@ -497,11 +497,19 @@ body.mode-simulate #gen-controls {
 }
 .sim-frames {
   grid-area: frames;
-  border-top: 1px solid var(--border);
   background: var(--bg-2);
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+.sim-frames-grip {
+  flex: 0 0 6px;
+  cursor: ns-resize;
+  background: var(--border);
+  touch-action: none;
+}
+.sim-frames-grip:hover {
+  background: var(--muted);
 }
 
 /* palette */
@@ -1091,7 +1099,12 @@ details.frame-row > summary > span {
   max-height: 8rem;
   overflow: auto;
 }
-.hex-toggle {
+.frame-raw-btns {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+.bytes-toggle {
   font: inherit;
   font-size: 0.68rem;
   color: var(--muted);
@@ -1099,10 +1112,13 @@ details.frame-row > summary > span {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0 0.35rem;
-  margin-top: 0.3rem;
   cursor: pointer;
 }
-.frame-hex {
+.bytes-toggle.on {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+.frame-bytes {
   margin: 0.3rem 0 0;
   white-space: pre-wrap;
   word-break: break-all;
