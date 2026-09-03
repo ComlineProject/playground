@@ -3,7 +3,8 @@
 /// instances, an inspector (instance facts, per-function behaviours,
 /// per-connection controls, and — for a connected client — the call form), and
 /// the merged frame list. Phase 2: many connections (2a), a node hosting
-/// several instances — a gateway (2b), an unreliable wire per connection (2c), a virtual clock (2d), a shareable session URL + record a shareable session URL (2e). replay (2e).
+/// several instances — a gateway (2b), an unreliable wire per connection (2c),
+/// a virtual clock (2d), a shareable session URL + record & replay (2e).
 
 import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
 import { RealClock, SteppedClock, type Clock } from "../clock.ts";
