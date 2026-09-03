@@ -3,7 +3,7 @@
 /// instances, an inspector (instance facts, per-function behaviours,
 /// per-connection controls, and — for a connected client — the call form), and
 /// the merged frame list. Phase 2: many connections (2a), a node hosting
-/// several instances — a gateway (2b), an unreliable wire per connection (2c), a virtual clock (2d).
+/// several instances — a gateway (2b), an unreliable wire per connection (2c), a virtual clock (2d), a shareable session URL (2e).
 
 import { BEHAVIORS, BEHAVIOR_KINDS, type BehaviorKind } from "../behavior.ts";
 import { RealClock, SteppedClock, type Clock } from "../clock.ts";
@@ -29,6 +29,7 @@ import {
   type Role,
   type Session,
 } from "../model.ts";
+import { decodeSession, encodeSession } from "../session-codec.ts";
 import { findProtocol, type ProjectShape } from "../shape.ts";
 import type { LogSource } from "./framelog.ts";
 import { argsForm, type ArgsForm } from "./argsform.ts";
@@ -38,8 +39,11 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 export interface SimView {
   el: HTMLElement;
-  /** Point at a freshly compiled shape (schemas were edited). */
-  setShape(shape: ProjectShape): void;
+  /** Point at a freshly compiled shape (schemas were edited). Pass a `#s=`
+   *  fragment payload to restore a shared session against that shape. */
+  setShape(shape: ProjectShape, serialized?: string | null): void;
+  /** The current session as a URL-fragment payload. */
+  serialize(): string;
   destroy(): void;
 }
 
@@ -438,6 +442,18 @@ export function createSim(): SimView {
         if (!session) return;
         session.seed = seed;
         void rebuildWires();
+      },
+      onShare: () => {
+        if (!session) return "";
+        const frag = `#s=${encodeSession(session)}`;
+        try {
+          const url = location.origin + location.pathname + location.search + frag;
+          location.hash = frag;
+          void navigator.clipboard?.writeText(url);
+          return url;
+        } catch {
+          return frag;
+        }
       },
     };
   }
@@ -941,9 +957,17 @@ export function createSim(): SimView {
 
   return {
     el,
-    setShape(shape) {
-      if (!session) session = emptySession(shape);
-      else rebuild(session, shape);
+    setShape(shape, serialized) {
+      const restored = serialized ? decodeSession(serialized, shape) : null;
+      if (restored) {
+        session = restored;
+        selectedId = null;
+        selectedConnId = null;
+      } else if (!session) {
+        session = emptySession(shape);
+      } else {
+        rebuild(session, shape);
+      }
       if (selectedId && !instance(session, selectedId)) selectedId = null;
       if (selectedConnId && !session.connections.some((c) => c.id === selectedConnId)) {
         selectedConnId = null;
@@ -955,6 +979,9 @@ export function createSim(): SimView {
       flog.setClockBar(clockBar());
       renderPalette();
       void rebuildWires(); // re-handshake every wire against the new shape
+    },
+    serialize() {
+      return session ? encodeSession(session) : "";
     },
     destroy() {
       window.removeEventListener("resize", onResize);

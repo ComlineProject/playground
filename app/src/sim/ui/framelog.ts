@@ -28,6 +28,8 @@ export interface ClockBar {
   clock: SteppedClock | null;
   onMode(mode: "real" | "stepped"): void;
   onSeed(seed: number): void;
+  /** Put the session on the URL fragment + clipboard; returns the shareable URL. */
+  onShare(): string;
 }
 
 export interface FrameLog {
@@ -283,6 +285,14 @@ export function frameLog(): FrameLog {
       seed.title = "fault RNG seed — same seed, same run";
       seed.addEventListener("change", () => bar.onSeed(Math.trunc(Number(seed.value) || 0)));
       clockBar.append(seed);
+
+      const share = mkBtn("⧉ link", () => {
+        bar.onShare();
+        share.textContent = "copied ✓";
+        setTimeout(() => (share.textContent = "⧉ link"), 1500);
+      });
+      share.title = "copy a link that restores this topology";
+      clockBar.append(share);
 
       const c = bar.clock;
       if (!c) return;
