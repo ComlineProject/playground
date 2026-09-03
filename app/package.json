@@ -22,7 +22,7 @@
     "@codemirror/state": "^6.4.0",
     "@codemirror/view": "^6.34.0",
     "@lezer/highlight": "^1.2.3",
-    "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#fix/prepack-for-yarn"
+    "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#eff27ce9b077ec411c299743b328a24089387215"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

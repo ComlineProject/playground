@@ -771,7 +771,7 @@ __metadata:
     "@codemirror/view": "npm:^6.34.0"
     "@lezer/highlight": "npm:^1.2.3"
     "@types/node": "npm:^20.19.43"
-    comline-simulator: "git+https://github.com/ComlineProject/simulator.git#fix/prepack-for-yarn"
+    comline-simulator: "git+https://github.com/ComlineProject/simulator.git#eff27ce9b077ec411c299743b328a24089387215"
     linkedom: "npm:^0.18.13"
     tsx: "npm:^4.23.13"
     typescript: "npm:^5.6.0"
@@ -779,10 +779,10 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"comline-simulator@git+https://github.com/ComlineProject/simulator.git#fix/prepack-for-yarn":
+"comline-simulator@git+https://github.com/ComlineProject/simulator.git#eff27ce9b077ec411c299743b328a24089387215":
   version: 0.0.0
-  resolution: "comline-simulator@https://github.com/ComlineProject/simulator.git#commit=ea4d2e612ed8ed1502d9b56964d093f788df7b1e"
-  checksum: 10c0/e33c7715e21a9e7b22e49a8d2de8c8411daadcb601044c1e251a12fca2727710cb28115db9e2d0d73ab2ef0d11700f2e63e34cf7590d43d0533effc6ac4843f1
+  resolution: "comline-simulator@https://github.com/ComlineProject/simulator.git#commit=eff27ce9b077ec411c299743b328a24089387215"
+  checksum: 10c0/4f08414f61a3720f6a169a7ab330b908755d7a1a981c0ce65c77e47ebacf50340eac00ee177595e80a810674e74551d3645d287124bd75abe1a4ef52914a6587
   languageName: node
   linkType: hard
 
