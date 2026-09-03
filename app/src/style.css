@@ -977,13 +977,45 @@ label.clock-btn {
   stroke: var(--err);
   stroke-dasharray: 3 3;
 }
+/* one grid template shared by the column header and every row's summary */
+.sim-frames {
+  --frame-grid: 3ch minmax(6rem, auto) 4.5rem minmax(3rem, 1fr) 4.5rem 3.5rem;
+  --frame-grid-conn: 7rem 3ch minmax(6rem, auto) 4.5rem minmax(3rem, 1fr) 4.5rem 3.5rem;
+}
+
+.sim-frames-cols {
+  display: grid;
+  grid-template-columns: var(--frame-grid);
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+.sim-frames-cols.has-conn {
+  grid-template-columns: var(--frame-grid-conn);
+}
+.sim-frames-cols:not(.has-conn) .frame-conn {
+  display: none;
+}
+.sim-frames-cols > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .frame-row {
   border-bottom: 1px solid var(--border);
   font-size: 0.72rem;
 }
 details.frame-row > summary {
   display: grid;
-  grid-template-columns: 3ch minmax(6rem, 1fr) 5.5rem 5rem 5rem 4rem;
+  grid-template-columns: var(--frame-grid);
   gap: 0.5rem;
   align-items: baseline;
   padding: 0.2rem 0.4rem;
@@ -991,7 +1023,7 @@ details.frame-row > summary {
   list-style: none;
 }
 details.frame-row.has-conn > summary {
-  grid-template-columns: 7rem 3ch minmax(6rem, 1fr) 5.5rem 5rem 5rem 4rem;
+  grid-template-columns: var(--frame-grid-conn);
 }
 .frame-conn {
   color: var(--accent);
@@ -1022,6 +1054,9 @@ details.frame-row > summary > span {
 .frame-row .frame-delta,
 .frame-row .frame-len {
   color: var(--muted);
+}
+.frame-delta,
+.frame-len {
   text-align: right;
 }
 .frame-handshake .frame-kind,

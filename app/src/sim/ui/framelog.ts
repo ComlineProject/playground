@@ -1,11 +1,12 @@
 /// The frame inspector under the canvas. It merges the frame logs of every live
-/// connection into one time-ordered list — a row per frame: connection (when
-/// there is more than one), direction, kind, function, round-trip time (on the
-/// reply, from its own request by id), byte length — expanding to the decoded
-/// envelope, the framing name, and the raw bytes as hex or text. A gap in
-/// *virtual* time over `IDLE_MS` inserts an `idle` separator. Every row kind and
-/// every connection is filterable from the header. A refused connection gets its
-/// own row. The pane's height is drag-resizable by its top grip.
+/// connection into one time-ordered list under a labelled column header — a row
+/// per frame: connection (when there is more than one), direction, kind,
+/// function, round-trip time (on the reply, from its own request by id), byte
+/// length — expanding to the decoded envelope, the framing name, and the raw
+/// bytes as hex or text. A gap in *virtual* time over `IDLE_MS` inserts an
+/// `idle` separator. Every row kind and every connection is filterable from the
+/// header. A refused connection gets its own row. The pane's height is
+/// drag-resizable by its top grip.
 ///
 /// The engine is the `comline-simulator` wasm now: frames are polled from the
 /// `Sim`, not pushed from a `Tap`. The view calls `poll()` after it advances the
@@ -168,9 +169,27 @@ export function frameLog(): FrameLog {
   clear.textContent = "clear";
   head.append(title, kindFilters, connFilters, clockBar, clear);
 
+  // column header — same grid as each row's `<summary>` (see the CSS)
+  const cols = document.createElement("div");
+  cols.className = "sim-frames-cols";
+  for (const [cls, label] of [
+    ["frame-conn", "conn"],
+    ["frame-seq", "#"],
+    ["frame-dir", "direction"],
+    ["frame-kind", "kind"],
+    ["frame-fn", "fn"],
+    ["frame-delta", "rtt"],
+    ["frame-len", "bytes"],
+  ] as const) {
+    const s = document.createElement("span");
+    s.className = cls;
+    s.textContent = label;
+    cols.append(s);
+  }
+
   const list = document.createElement("div");
   list.className = "sim-frames-list";
-  el.append(grip, head, list);
+  el.append(grip, head, cols, list);
 
   let sources: LogSource[] = [];
   let api: FrameSource = { frames: () => [], detail: () => null };
@@ -321,6 +340,7 @@ export function frameLog(): FrameLog {
       sources = next;
       api = next_api;
       multi = next.length > 1;
+      cols.classList.toggle("has-conn", multi);
       labelByConn.clear();
       for (const s of next) labelByConn.set(s.connId, s.label);
       renderConnFilters();
