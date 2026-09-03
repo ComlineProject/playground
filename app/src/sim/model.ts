@@ -88,6 +88,16 @@ export function emptySession(shape: ProjectShape): Session {
   };
 }
 
+/** After loading a session from JSON, bump the id counters past everything in
+ *  it so freshly-added instances / nodes / connections don't collide. */
+export function reseedCounters(session: Session): void {
+  const max = (ids: string[], prefix: string) =>
+    ids.reduce((m, id) => Math.max(m, Number(id.slice(prefix.length)) || 0), 0);
+  counter = Math.max(counter, max(session.instances.map((i) => i.id), "i"));
+  nodeCounter = Math.max(nodeCounter, max(session.nodes.map((n) => n.id), "n"));
+  connCounter = Math.max(connCounter, max(session.connections.map((c) => c.id), "c"));
+}
+
 /** Seed a server's per-function behaviour map from the protocol shape. */
 function seedBehaviors(
   session: Session,

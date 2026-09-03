@@ -677,3 +677,56 @@ test("2d — stepped clock: a delayed reply lands only after the step button is 
 
   sim.destroy();
 });
+
+test("2e — a serialized session restores its nodes, connections and live wires", async () => {
+  const build = createSim();
+  document.body.append(build.el);
+  build.setShape(shape());
+  const canvas = build.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "client" });
+
+  const all = [...build.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  const serverId = all.find((n) => n.classList.contains("role-server"))!.dataset.id!;
+  const clientIds = all.filter((n) => n.classList.contains("role-client")).map((n) => n.dataset.id!);
+  const node = (root: ParentNode, id: string) =>
+    root.querySelector(`.sim-node[data-id="${id}"]`) as HTMLElement;
+
+  // reply constant + two connections (a fan-out)
+  fire(node(build.el, serverId), "click");
+  const cfg = build.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "SHARED", seq: 5 } });
+  fire(cfg, "change");
+  for (const cid of clientIds) {
+    fire(node(build.el, cid), "click");
+    pick(build.el.querySelector(".connect-sel") as HTMLSelectElement, serverId);
+    await tick();
+  }
+  assert.equal(build.el.querySelectorAll(".sim-wire .wire-live").length, 2);
+
+  const payload = build.serialize();
+  assert.ok(payload.length > 20);
+  build.destroy();
+
+  // a fresh view, same schema, restored from the payload
+  const restored = createSim();
+  document.body.append(restored.el);
+  restored.setShape(shape(), payload);
+  await tick();
+
+  assert.equal(restored.el.querySelectorAll(".sim-node-group").length, 3, "3 boxes back");
+  assert.equal(restored.el.querySelectorAll(".sim-wire .wire-live").length, 2, "2 wires reconnected");
+
+  // and a call over a restored wire still works
+  const rClient = [...restored.el.querySelectorAll(".sim-node.role-client")][0] as HTMLElement;
+  fire(rClient, "click");
+  pick(restored.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  fire(
+    [...restored.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+    "click",
+  );
+  await tick();
+  assert.match(restored.el.querySelector(".call-out")!.textContent!, /"body": "SHARED"/);
+  restored.destroy();
+});

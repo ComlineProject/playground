@@ -726,6 +726,8 @@ const appModeEl = $<HTMLDivElement>("#app-mode");
 const simEl = $<HTMLDivElement>("#sim");
 let sim: SimView | null = null;
 
+let simLoaded = false;
+
 async function enterSimulate() {
   const shape = await unwrap<ProjectShape>(
     { cmd: "describeProject", files: project() },
@@ -735,7 +737,10 @@ async function enterSimulate() {
     sim = createSim();
     simEl.append(sim.el);
   }
-  sim.setShape(shape);
+  // A `#s=…` fragment restores a shared topology, but only on the first entry.
+  const shared = /[#&]s=([^&]+)/.exec(location.hash)?.[1];
+  sim.setShape(shape, !simLoaded && shared ? decodeURIComponent(shared) : null);
+  simLoaded = true;
   document.body.classList.add("mode-simulate");
 }
 
@@ -773,3 +778,11 @@ renderFileTree();
 
 statusEl.textContent = "compiling…";
 void refresh();
+
+// A shared link (`…#s=…`) lands straight in the simulate view.
+if (/[#&]s=/.test(location.hash)) {
+  for (const b of appModeEl.querySelectorAll("button")) {
+    b.classList.toggle("active", b.dataset.app === "simulate");
+  }
+  void enterSimulate();
+}
