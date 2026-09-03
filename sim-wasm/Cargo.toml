@@ -1,0 +1,23 @@
+[package]
+name = "comline-playground-sim-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The simulation engine — its own repo, pinned by rev, the same pattern `wasm/`
+# uses for `comline-core`. Default build is lean (no Rhai); `--features script`
+# is a separate, lazily-loaded artifact.
+comline-simulator = { git = "https://github.com/ComlineProject/simulator", rev = "7fade69c326c04e4aad7c49e6e51b0ffc18376ac", default-features = false }
+wasm-bindgen = "0.2"
+
+[features]
+script = ["comline-simulator/script"]
+
+[profile.release]
+opt-level = "s"
+lto = true

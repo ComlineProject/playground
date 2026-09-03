@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "wasm": "wasm-pack build ../wasm --release --target web --out-dir ../app/src/wasm --out-name comline_playground_wasm",
-    "dev": "npm run wasm && vite",
+    "sim-wasm": "wasm-pack build ../sim-wasm --release --target web --out-dir ../app/src/sim-wasm --out-name comline_sim",
+    "sim-wasm:script": "wasm-pack build ../sim-wasm --release --target web --out-dir ../app/src/sim-wasm --out-name comline_sim_script -- --features script",
+    "wasm:all": "npm run wasm && npm run sim-wasm",
+    "dev": "npm run wasm:all && vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "tsc -p tsconfig.test.json && node --import tsx --test \"src/sim/**/*.test.ts\""
