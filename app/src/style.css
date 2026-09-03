@@ -977,10 +977,13 @@ label.clock-btn {
   stroke: var(--err);
   stroke-dasharray: 3 3;
 }
-/* one grid template shared by the column header and every row's summary */
+/* One grid template shared by the column header and every row's summary. Every
+   track is rem / fr — no `ch`, `auto` or `max-content`, which would size to each
+   grid's own content and drift (the header text ≠ the row text, and the header
+   font is smaller). */
 .sim-frames {
-  --frame-grid: 3ch minmax(6rem, auto) 4.5rem minmax(3rem, 1fr) 4.5rem 3.5rem;
-  --frame-grid-conn: 7rem 3ch minmax(6rem, auto) 4.5rem minmax(3rem, 1fr) 4.5rem 3.5rem;
+  --frame-grid: 2rem 10rem 5rem 1fr 4.5rem 3.5rem;
+  --frame-grid-conn: 7rem 2rem 10rem 5rem 1fr 4.5rem 3.5rem;
 }
 
 .sim-frames-cols {
