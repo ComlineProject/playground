@@ -755,6 +755,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"comline-examples@git+https://github.com/ComlineProject/examples.git#f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7":
+  version: 0.0.0
+  resolution: "comline-examples@https://github.com/ComlineProject/examples.git#commit=f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7"
+  checksum: 10c0/8659fdb337f52f30bf55f4c0eb185b0937e6ea819a078ba6c07ba3bc3e00b89f8349e337e596e8d8b9410041fd538e0523bc0d7e8487e8cabb1b010e2ac02f0e
+  languageName: node
+  linkType: hard
+
 "comline-playground@workspace:.":
   version: 0.0.0-use.local
   resolution: "comline-playground@workspace:."
@@ -771,6 +778,7 @@ __metadata:
     "@codemirror/view": "npm:^6.34.0"
     "@lezer/highlight": "npm:^1.2.3"
     "@types/node": "npm:^20.19.43"
+    comline-examples: "git+https://github.com/ComlineProject/examples.git#f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7"
     comline-simulator: "git+https://github.com/ComlineProject/simulator.git#eff27ce9b077ec411c299743b328a24089387215"
     linkedom: "npm:^0.18.13"
     tsx: "npm:^4.23.13"

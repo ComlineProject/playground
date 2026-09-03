@@ -4,6 +4,6 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src/sim"],
+  "include": ["src/sim", "src/examples.test.ts"],
   "exclude": []
 }
