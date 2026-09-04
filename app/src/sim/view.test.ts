@@ -659,6 +659,48 @@ test("2b — `remove box` deletes the box and all its instances", async () => {
   sim.destroy();
 });
 
+test("2b — the instance inspector is tabbed, and the active tab survives a re-render", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  assert.ok(sim.el.querySelector(".sim-inspector-grip"), "the inspector has a resize grip");
+
+  const { server, client } = place(sim);
+
+  const tab = (name: string) =>
+    [...sim.el.querySelectorAll(".insp-tab")].find((t) => t.textContent === name) as
+      | HTMLElement
+      | undefined;
+  const panel = (name: string) =>
+    sim.el.querySelector(`.insp-tabpanel[data-tab="${name}"]`) as HTMLElement;
+
+  fire(server, "click");
+  assert.ok(tab("instance") && tab("connections") && tab("behaviours"), "server tabs");
+  assert.equal(tab("instance")!.classList.contains("active"), true, "instance is the default tab");
+  assert.equal(panel("behaviours").hidden, true, "the behaviours panel starts hidden");
+
+  fire(tab("behaviours")!, "click");
+  assert.equal(panel("behaviours").hidden, false, "clicking the tab reveals its panel");
+  assert.equal(panel("instance").hidden, true, "the instance panel is now hidden");
+
+  // a behaviour edit re-renders the whole inspector — the tab must stick
+  pick(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement, "drop");
+  await tick();
+  assert.equal(tab("behaviours")!.classList.contains("active"), true, "still on the behaviours tab");
+  assert.equal(panel("behaviours").hidden, false);
+
+  // a client has no behaviours tab; it falls back to instance, then gains a call tab once connected
+  fire(client, "click");
+  assert.equal(tab("behaviours"), undefined, "no behaviours tab for a client");
+  assert.equal(tab("call"), undefined, "no call tab until connected");
+  assert.equal(tab("instance")!.classList.contains("active"), true, "fell back to the instance tab");
+
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  assert.ok(tab("call"), "a connected client gets a call tab");
+  sim.destroy();
+});
+
 test("2c — the fault inspector drops responses: the edge goes faulty and the call times out", async () => {
   const sim = createSim();
   document.body.append(sim.el);

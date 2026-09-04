@@ -488,10 +488,26 @@ body.mode-simulate #gen-controls {
 .canvas-hint[hidden] {
   display: none;
 }
-.sim-inspector {
+/* the inspector column: a left-edge drag grip + the scrolling pane */
+.sim-inspector-wrap {
   grid-area: inspector;
-  border-left: 1px solid var(--border);
+  display: flex;
+  min-width: 0;
+  min-height: 0;
   background: var(--bg-2);
+}
+.sim-inspector-grip {
+  flex: 0 0 6px;
+  cursor: ew-resize;
+  background: var(--border);
+  touch-action: none;
+}
+.sim-inspector-grip:hover {
+  background: var(--muted);
+}
+.sim-inspector {
+  flex: 1;
+  min-width: 0;
   padding: 0.6rem 0.7rem;
   font-size: 0.78rem;
 }
@@ -685,10 +701,38 @@ body.mode-simulate #gen-controls {
   padding-top: 0.6rem;
 }
 /* the first section heads the panel — no divider above nothing */
-.sim-inspector > .insp-section:first-child {
+.sim-inspector > .insp-section:first-child,
+.insp-tabpanel > .insp-section:first-child {
   margin-top: 0.1rem;
   border-top: none;
   padding-top: 0;
+}
+/* instance-inspector tabs — Instance · Connections · Behaviours · Call */
+.insp-tabs {
+  display: flex;
+  gap: 0.15rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.7rem;
+}
+.insp-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0.32rem 0.5rem;
+  font: inherit;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: pointer;
+}
+.insp-tab:hover {
+  color: var(--fg);
+}
+.insp-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
 }
 .insp-facts {
   display: grid;
