@@ -1048,64 +1048,54 @@ label.clock-btn {
   stroke: var(--err);
   stroke-dasharray: 3 3;
 }
-/* One grid template shared by the column header and every row's summary. Every
-   track is rem / fr — no `ch`, `auto` or `max-content`, which would size to each
-   grid's own content and drift (the header text ≠ the row text, and the header
-   font is smaller). */
-.sim-frames {
-  /* tracks include each cell's 1rem of horizontal padding (border-box) */
-  --frame-grid: 3rem 10rem 5.5rem 1fr 5rem 4rem;
-  --frame-grid-conn: 8rem 3rem 10rem 5.5rem 1fr 5rem 4rem;
+/* the frame log is a real <table>: fixed layout keeps the columns aligned,
+   the <thead> sticks while the <tbody> rows scroll. */
+.sim-frames-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.72rem;
 }
-
-.sim-frames-cols,
-details.frame-row > summary {
-  display: grid;
-  grid-template-columns: var(--frame-grid);
-  align-items: baseline;
-}
-.sim-frames-cols.has-conn,
-details.frame-row.has-conn > summary {
-  grid-template-columns: var(--frame-grid-conn);
-}
-.sim-frames-cols:not(.has-conn) .frame-conn {
-  display: none;
-}
-/* column rules — a border on every cell but the last makes it read as a table */
-.sim-frames-cols > span,
-details.frame-row > summary > span {
-  min-width: 0;
+.sim-frames-table th,
+.sim-frames-table td {
+  padding: 0.22rem 0.5rem;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 0.22rem 0.5rem;
   border-right: 1px solid var(--border);
 }
-.sim-frames-cols > span:last-child,
-details.frame-row > summary > span:last-child {
+.sim-frames-table th:last-child,
+.sim-frames-table td:last-child {
   border-right: none;
 }
-
-.sim-frames-cols {
+.sim-frames-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 400;
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
   background: var(--bg-2);
-  border-bottom: 1px solid var(--border);
+  /* a real border-bottom doesn't stick with border-collapse — paint it */
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
-.frame-row {
+tbody.frame-row {
   border-bottom: 1px solid var(--border);
-  font-size: 0.72rem;
 }
-details.frame-row > summary {
+tbody.frame-row > tr.frame-summary {
   cursor: pointer;
-  list-style: none;
 }
-details.frame-row > summary:hover {
+tbody.frame-row > tr.frame-summary:hover {
   background: #ffffff08;
 }
+tbody.frame-row > tr.frame-detail > td {
+  padding: 0;
+}
+
 .frame-conn {
   color: var(--accent);
   opacity: 0.85;
@@ -1113,9 +1103,6 @@ details.frame-row > summary:hover {
 .conn-filters {
   border-left: 1px solid var(--border);
   padding-left: 0.4rem;
-}
-details.frame-row > summary::-webkit-details-marker {
-  display: none;
 }
 .frame-row .frame-seq {
   color: var(--muted);
@@ -1138,7 +1125,7 @@ details.frame-row > summary::-webkit-details-marker {
 .frame-unknown .frame-kind {
   color: var(--muted);
 }
-.frame-refused {
+.frame-refused td {
   padding: 0.3rem 0.4rem;
   color: var(--err);
 }
@@ -1173,7 +1160,10 @@ details.frame-row > summary::-webkit-details-marker {
   color: var(--muted);
   font-size: 0.72rem;
 }
-.frame-idle {
+tbody.frame-idle > tr > td {
+  padding: 0;
+}
+.frame-idle-line {
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -1182,8 +1172,8 @@ details.frame-row > summary::-webkit-details-marker {
   color: var(--muted);
   opacity: 0.75;
 }
-.frame-idle::before,
-.frame-idle::after {
+.frame-idle-line::before,
+.frame-idle-line::after {
   content: "";
   flex: 1;
   border-top: 1px dashed var(--border);
