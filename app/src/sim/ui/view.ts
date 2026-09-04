@@ -12,9 +12,9 @@
 /// `sim.call()` + advancing the clock + polling `sim.result()`; the frame log
 /// polls `sim.frames()`.
 
-import { findProtocol, type ProjectShape, type ThrowShape } from "../shape.ts";
+import { findProtocol, type FnShape, type ProjectShape, type ThrowShape } from "../shape.ts";
 import { Sim } from "comline-simulator";
-import { argsForm, type ArgsForm } from "./argsform.ts";
+import { argsForm } from "./argsform.ts";
 import { frameLog, type ClockBar, type Frame, type FrameSource, type LogSource } from "./framelog.ts";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -120,7 +120,6 @@ export function createSim(opts: SimOpts = {}): SimView {
   let selectedNodeId: string | null = null;
   /** Which tab the instance inspector shows — kept across re-renders. */
   let inspectorTab = "instance";
-  let callForm: ArgsForm | null = null;
   let lastRecording: Recording | null = null;
   let playHandle: ReturnType<typeof setInterval> | null = null;
   let speed = 1;
@@ -776,7 +775,6 @@ export function createSim(opts: SimOpts = {}): SimView {
   // ── inspector ────────────────────────────────────────────────────────
   function renderInspector() {
     inspectorEl.replaceChildren();
-    callForm = null;
     if (!model || !sim || !shape) return;
 
     if (selectedConnId) {
@@ -922,7 +920,10 @@ export function createSim(opts: SimOpts = {}): SimView {
     // ── behaviours (server) ──
     const behPanel = sel.role === "server" ? mkPanel("behaviours") : null;
     if (behPanel) {
-      for (const fn of found.protocol.functions) behPanel.append(behaviorRow(sel, fn.name));
+      found.protocol.functions.forEach((fn, idx) => {
+        if (idx > 0) behPanel.append(sep());
+        behPanel.append(behaviorRow(sel, fn.name));
+      });
     }
 
     // ── call (connected client) ──
@@ -1315,6 +1316,8 @@ export function createSim(opts: SimOpts = {}): SimView {
     return wrap;
   }
 
+  /** The CALL tab: an optional `via` connection picker, then one block per
+   *  protocol function — each with its own args, send button and reply. */
   function renderCallForm(i: ModelInstance): HTMLElement {
     const found = findProtocol(shape!, i.schemaNs, i.protocol)!;
     const wrap = div("call-form");
@@ -1331,55 +1334,57 @@ export function createSim(opts: SimOpts = {}): SimView {
     }
     const pickConn = () => (connSel ? selValue(connSel) || liveConns[0]?.id : liveConns[0]?.id);
 
-    const fnSel = document.createElement("select");
-    fnSel.className = "call-fn";
-    found.protocol.functions.forEach((fn, idx) => fnSel.append(opt(fn.name, fn.name, idx === 0)));
-    wrap.append(row("fn", fnSel));
+    // one self-contained block per function: its args, a send button, and the
+    // reply it produced — separated by a short centred rule
+    const block = (fn: FnShape) => {
+      const b = div("call-block");
+      const name = document.createElement("div");
+      name.className = "call-fn-name mono";
+      name.textContent = `${fn.name}(${fn.args.map((a) => a.name).join(", ")})`;
+      b.append(name);
 
-    const formHost = div("call-args");
-    wrap.append(formHost);
+      const form = argsForm(fn.args, found.schema);
+      const host = div("call-args");
+      host.append(form.el);
+      b.append(host);
 
-    const out = div("call-out mono");
-    wrap.append(out);
+      const out = div("call-out mono");
+      b.append(out);
 
-    const send = button("send", "primary", () => {
-      const connId = pickConn();
-      if (!callForm || !connId || !sim) return;
-      out.className = "call-out mono";
-      let params: unknown;
-      try {
-        params = callForm.read();
-      } catch (e) {
-        out.textContent = (e as Error).message;
-        out.classList.add("err");
-        return;
-      }
-      const fnName = selValue(fnSel);
-      const fn = found.protocol.functions.find((f) => f.name === fnName)!;
-      out.textContent = "…";
-      let id: number;
-      try {
-        id = sim.call(connId, fnName, JSON.stringify(params));
-      } catch (e) {
-        out.textContent = String((e as Error).message ?? e);
-        out.classList.add("err");
-        return;
-      }
-      pendingCalls.set(id, { out, throws: fn.throws });
-      if (clockMode === "real") sim.run();
-      afterAdvance();
-    });
-    wrap.append(send);
-
-    const rebuildForm = () => {
-      const fn =
-        found.protocol.functions.find((f) => f.name === selValue(fnSel)) ??
-        found.protocol.functions[0];
-      callForm = argsForm(fn.args, found.schema);
-      formHost.replaceChildren(callForm.el);
+      b.append(
+        button("send", "primary", () => {
+          const connId = pickConn();
+          if (!connId || !sim) return;
+          out.className = "call-out mono";
+          let params: unknown;
+          try {
+            params = form.read();
+          } catch (e) {
+            out.textContent = (e as Error).message;
+            out.classList.add("err");
+            return;
+          }
+          out.textContent = "…";
+          let id: number;
+          try {
+            id = sim.call(connId, fn.name, JSON.stringify(params));
+          } catch (e) {
+            out.textContent = String((e as Error).message ?? e);
+            out.classList.add("err");
+            return;
+          }
+          pendingCalls.set(id, { out, throws: fn.throws });
+          if (clockMode === "real") sim.run();
+          afterAdvance();
+        }),
+      );
+      return b;
     };
-    fnSel.addEventListener("change", rebuildForm);
-    rebuildForm();
+
+    found.protocol.functions.forEach((fn, idx) => {
+      if (idx > 0 || connSel) wrap.append(sep());
+      wrap.append(block(fn));
+    });
     return wrap;
   }
 
@@ -1477,6 +1482,12 @@ function section(text: string): HTMLElement {
   const h = document.createElement("div");
   h.className = "insp-section";
   h.textContent = text;
+  return h;
+}
+/** A short, centred rule between repeated blocks (call fns, behaviour rows). */
+function sep(): HTMLHRElement {
+  const h = document.createElement("hr");
+  h.className = "insp-sep";
   return h;
 }
 function row(label: string, control: HTMLElement): HTMLElement {
