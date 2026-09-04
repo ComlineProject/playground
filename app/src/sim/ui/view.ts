@@ -1,10 +1,11 @@
 /// The full-width simulate view: a palette of protocol × role, a canvas of node
 /// boxes (each hosting one or more instances), the connections between
-/// instances, an inspector, and the merged frame list. The inspector follows the
-/// canvas selection — a box (its name, instances, add / remove), an instance
-/// (facts, per-function behaviours, per-connection controls, and — for a
-/// connected client — the call form), or a connection (framing, faults). Click a
-/// box's header to select the box, a chip to select the instance.
+/// instances, an inspector, and the merged frame list. The inspector — a
+/// left-edge grip resizes it — follows the canvas selection: a box (its name,
+/// instances, add / remove), an instance (tabs: Instance facts · Connections ·
+/// Behaviours for a server · Call for a connected client), or a connection
+/// (framing, faults). Click a box's header to select the box, a chip to select
+/// the instance.
 ///
 /// The engine is `comline-simulator` (Rust → WASM) now. This module holds a
 /// `Sim`, mirrors its `session_json()` for rendering, and drives it — a call is
@@ -117,6 +118,8 @@ export function createSim(opts: SimOpts = {}): SimView {
   let selectedId: string | null = null;
   let selectedConnId: string | null = null;
   let selectedNodeId: string | null = null;
+  /** Which tab the instance inspector shows — kept across re-renders. */
+  let inspectorTab = "instance";
   let callForm: ArgsForm | null = null;
   let lastRecording: Recording | null = null;
   let playHandle: ReturnType<typeof setInterval> | null = null;
@@ -168,6 +171,11 @@ export function createSim(opts: SimOpts = {}): SimView {
   const paletteEl = div("sim-col sim-palette");
   const canvasEl = div("sim-col sim-canvas");
   const inspectorEl = div("sim-col sim-inspector");
+  // the inspector rides in a wrapper so a drag-grip can sit on its left edge
+  const inspectorWrap = div("sim-inspector-wrap");
+  const inspectorGrip = div("sim-inspector-grip");
+  inspectorGrip.title = "drag to resize";
+  inspectorWrap.append(inspectorGrip, inspectorEl);
   const wireSvg = document.createElementNS(SVGNS, "svg");
   wireSvg.setAttribute("class", "sim-wire");
   canvasEl.append(wireSvg);
@@ -176,12 +184,51 @@ export function createSim(opts: SimOpts = {}): SimView {
   el.append(
     labelled("palette", paletteEl),
     labelled("canvas", canvasEl),
-    inspectorEl,
+    inspectorWrap,
     flog.el,
   );
 
   const onResize = () => drawWires();
   window.addEventListener("resize", onResize);
+
+  // ── inspector resize grip ────────────────────────────────────────────
+  // drags the `.sim` grid's last column; the canvas (1fr) takes the rest.
+  const INSP_WIDTH_KEY = "sim.inspector.width";
+  const storedInspectorWidth = (): number | null => {
+    try {
+      const n = Number(localStorage.getItem(INSP_WIDTH_KEY));
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch {
+      return null;
+    }
+  };
+  const applyInspectorWidth = (w: number) => {
+    const room = el.clientWidth;
+    const max = room > 0 ? Math.max(280, room - 420) : Infinity;
+    const clamped = Math.round(Math.min(max, Math.max(240, w)));
+    el.style.gridTemplateColumns = `190px 1fr ${clamped}px`;
+    try {
+      localStorage.setItem(INSP_WIDTH_KEY, String(clamped));
+    } catch {
+      /* private mode — just don't persist */
+    }
+    drawWires();
+  };
+  const savedInspectorWidth = storedInspectorWidth();
+  if (savedInspectorWidth !== null) applyInspectorWidth(savedInspectorWidth);
+  inspectorGrip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    inspectorGrip.setPointerCapture?.(e.pointerId);
+    const startX = e.clientX;
+    const startW = inspectorWrap.getBoundingClientRect().width;
+    const move = (ev: PointerEvent) => applyInspectorWidth(startW + (startX - ev.clientX));
+    const up = () => {
+      inspectorGrip.removeEventListener("pointermove", move);
+      inspectorGrip.removeEventListener("pointerup", up);
+    };
+    inspectorGrip.addEventListener("pointermove", move);
+    inspectorGrip.addEventListener("pointerup", up);
+  });
 
   const frameApi: FrameSource = {
     frames: (connId) => (sim ? (JSON.parse(sim.frames(connId)) as Frame[]) : []),
@@ -752,7 +799,6 @@ export function createSim(opts: SimOpts = {}): SimView {
       return;
     }
 
-    inspectorEl.append(section("instance"));
     const box = node(sel.nodeId);
     if (box) {
       const crumb = document.createElement("button");
@@ -762,7 +808,16 @@ export function createSim(opts: SimOpts = {}): SimView {
       crumb.addEventListener("click", () => selectNode(box.id));
       inspectorEl.append(crumb);
     }
-    inspectorEl.append(
+
+    const mkPanel = (name: string) => {
+      const p = div("insp-tabpanel");
+      p.dataset.tab = name;
+      return p;
+    };
+
+    // ── instance ──
+    const instPanel = mkPanel("instance");
+    instPanel.append(
       facts([
         ["name", sel.name],
         ["protocol", sel.protocol],
@@ -775,17 +830,16 @@ export function createSim(opts: SimOpts = {}): SimView {
     hash.textContent = sel.irHash;
     hash.title = "copy ir_hash";
     hash.addEventListener("click", () => void navigator.clipboard?.writeText(sel.irHash));
-    inspectorEl.append(row("ir_hash", hash));
+    instPanel.append(row("ir_hash", hash));
     if (sel.irHash !== found.schema.ir_hash) {
-      inspectorEl.append(
+      instPanel.append(
         button("resync — schema changed", "danger", () => {
           sim!.resync_instance(sel.id);
           redraw();
         }),
       );
     }
-
-    inspectorEl.append(
+    instPanel.append(
       button("remove instance", "danger", () => {
         sim!.remove_instance(sel.id);
         if (selectedId === sel.id) selectedId = null;
@@ -794,9 +848,9 @@ export function createSim(opts: SimOpts = {}): SimView {
     );
 
     // ── connections ──
-    inspectorEl.append(section("connections"));
+    const connPanel = mkPanel("connections");
     const conns = connsFor(sel.id);
-    if (conns.length === 0) inspectorEl.append(muted("none"));
+    if (conns.length === 0) connPanel.append(muted("none"));
     for (const conn of conns) {
       const otherId = conn.clientId === sel.id ? conn.serverId : conn.clientId;
       const other = inst(otherId);
@@ -824,8 +878,8 @@ export function createSim(opts: SimOpts = {}): SimView {
       x.title = "disconnect";
       x.addEventListener("click", () => disconnect(conn.id));
       r.append(dot, name, x);
-      inspectorEl.append(r);
-      if (err) inspectorEl.append(muted(`connection refused · ${err}`, "err"));
+      connPanel.append(r);
+      if (err) connPanel.append(muted(`connection refused · ${err}`, "err"));
     }
     const open = openPartnersFor(sel);
     if (open.length) {
@@ -838,7 +892,7 @@ export function createSim(opts: SimOpts = {}): SimView {
         const other = otherId ? inst(otherId) : null;
         if (other) tryConnect(sel, other);
       });
-      inspectorEl.append(row("add", addSel));
+      connPanel.append(row("add", addSel));
     }
 
     const latency = document.createElement("input");
@@ -851,7 +905,7 @@ export function createSim(opts: SimOpts = {}): SimView {
       sim!.set_latency(Math.max(0, Number(latency.value) || 0));
       redraw();
     });
-    inspectorEl.append(row("latency ms", latency));
+    connPanel.append(row("latency ms", latency));
 
     const timeout = document.createElement("input");
     timeout.type = "number";
@@ -863,18 +917,43 @@ export function createSim(opts: SimOpts = {}): SimView {
       sim!.set_call_timeout(Math.max(0, Number(timeout.value) || 0));
       redraw();
     });
-    inspectorEl.append(row("call timeout ms", timeout));
+    connPanel.append(row("call timeout ms", timeout));
 
-    if (sel.role === "server") {
-      inspectorEl.append(section("behaviours"));
-      for (const fn of found.protocol.functions) {
-        inspectorEl.append(behaviorRow(sel, fn.name));
-      }
+    // ── behaviours (server) ──
+    const behPanel = sel.role === "server" ? mkPanel("behaviours") : null;
+    if (behPanel) {
+      for (const fn of found.protocol.functions) behPanel.append(behaviorRow(sel, fn.name));
     }
 
-    if (sel.role === "client" && connsFor(sel.id).some((c) => live(c.id))) {
-      inspectorEl.append(renderCallForm(sel));
+    // ── call (connected client) ──
+    const callPanel =
+      sel.role === "client" && connsFor(sel.id).some((c) => live(c.id)) ? mkPanel("call") : null;
+    if (callPanel) callPanel.append(renderCallForm(sel));
+
+    const panels: HTMLElement[] = [instPanel, connPanel, behPanel, callPanel].filter(
+      (p): p is HTMLDivElement => p !== null,
+    );
+    if (!panels.some((p) => p.dataset.tab === inspectorTab)) inspectorTab = "instance";
+
+    const tabs = div("insp-tabs");
+    for (const p of panels) {
+      const name = p.dataset.tab!;
+      const b = document.createElement("button");
+      b.className = "insp-tab";
+      b.dataset.tab = name;
+      b.textContent = name;
+      b.classList.toggle("active", name === inspectorTab);
+      b.addEventListener("click", () => {
+        inspectorTab = name;
+        for (const t of tabs.children) {
+          t.classList.toggle("active", (t as HTMLElement).dataset.tab === name);
+        }
+        for (const pp of panels) pp.hidden = pp.dataset.tab !== name;
+      });
+      tabs.append(b);
     }
+    for (const p of panels) p.hidden = p.dataset.tab !== inspectorTab;
+    inspectorEl.append(tabs, ...panels);
   }
 
   /** The box itself: its name, the instances it hosts (each selectable), a way
@@ -1239,7 +1318,6 @@ export function createSim(opts: SimOpts = {}): SimView {
   function renderCallForm(i: ModelInstance): HTMLElement {
     const found = findProtocol(shape!, i.schemaNs, i.protocol)!;
     const wrap = div("call-form");
-    wrap.append(section("call"));
 
     const liveConns = connsFor(i.id).filter((c) => live(c.id));
     let connSel: HTMLSelectElement | null = null;
