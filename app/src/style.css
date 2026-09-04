@@ -595,6 +595,13 @@ body.mode-simulate #gen-controls {
   outline: 2px dashed var(--accent);
   outline-offset: 2px;
 }
+.sim-node-group.selected {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.sim-node-group.selected > .group-cap {
+  color: var(--accent);
+}
 .group-cap {
   padding: 0.28rem 0.6rem 0.24rem;
   font-size: 0.62rem;
@@ -1173,4 +1180,41 @@ details.frame-row > summary::-webkit-details-marker {
   border-radius: 4px;
   padding: 0.15rem 0.4rem;
   width: 5rem;
+}
+.box-name {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+}
+/* the box inspector's instance list — role-tinted like the canvas chips */
+.box-inst {
+  border-left: 3px solid transparent;
+  padding-left: 0.4rem;
+}
+.box-inst.role-server {
+  border-left-color: var(--accent);
+}
+.box-inst.role-client {
+  border-left-color: var(--ok);
+}
+/* "▸ in box MACHINE 2" — jumps the inspector up to the box */
+.insp-crumb {
+  display: block;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.insp-crumb:hover {
+  color: var(--accent);
 }
