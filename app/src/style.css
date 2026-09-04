@@ -9,6 +9,7 @@
   --warn: #e0af68;
   --border: #34344a;
   font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  color-scheme: dark;
 }
 
 * {
@@ -919,6 +920,13 @@ body.mode-simulate #gen-controls {
 }
 .arg-input {
   width: 100%;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
 }
 .arg-struct {
   border: 1px solid var(--border);
