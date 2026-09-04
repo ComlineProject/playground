@@ -606,7 +606,7 @@ test("2b — a box is named `Machine N` and its header renames on double-click",
   sim.destroy();
 });
 
-test("2b — the box header selects the box; a chip selects the instance; bare canvas clears it", async () => {
+test("2b — the box header selects the box; a chip selects the instance", async () => {
   const sim = createSim();
   document.body.append(sim.el);
   sim.setShape(shape());
@@ -629,10 +629,6 @@ test("2b — the box header selects the box; a chip selects the instance; bare c
   // the crumb → back to the box
   fire(crumb, "click");
   assert.ok(sim.el.querySelector(".box-name"), "the crumb reselects the box");
-
-  // bare canvas → nothing selected
-  fire(sim.el.querySelector(".sim-canvas") as HTMLElement, "click");
-  assert.match(insp(), /select a box/);
   sim.destroy();
 });
 

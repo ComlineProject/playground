@@ -4,8 +4,7 @@
 /// canvas selection — a box (its name, instances, add / remove), an instance
 /// (facts, per-function behaviours, per-connection controls, and — for a
 /// connected client — the call form), or a connection (framing, faults). Click a
-/// box's header to select the box, a chip to select the instance, bare canvas to
-/// clear.
+/// box's header to select the box, a chip to select the instance.
 ///
 /// The engine is `comline-simulator` (Rust → WASM) now. This module holds a
 /// `Sim`, mirrors its `session_json()` for rendering, and drives it — a call is
@@ -290,13 +289,6 @@ export function createSim(opts: SimOpts = {}): SimView {
     redraw();
   });
 
-  // a click on the bare canvas (not a box, not a wire) clears the selection
-  canvasEl.addEventListener("click", (e) => {
-    const t = e.target as HTMLElement | null;
-    if (t?.closest(".sim-node-group") || t?.closest("line")) return;
-    clearSelection();
-  });
-
   function nodeEl(instanceId: string): HTMLElement | null {
     return canvasEl.querySelector<HTMLElement>(`.sim-node[data-id="${instanceId}"]`);
   }
@@ -324,13 +316,6 @@ export function createSim(opts: SimOpts = {}): SimView {
     repaintSelection();
     renderInspector();
   }
-  function clearSelection() {
-    if (!selectedId && !selectedConnId && !selectedNodeId) return;
-    selectedId = selectedConnId = selectedNodeId = null;
-    repaintSelection();
-    renderInspector();
-  }
-
   /** Selection is just additive classes on the canvas — toggle them in place
    *  rather than rebuilding every box (which would drop a mid-gesture element,
    *  e.g. the header between the two clicks of a rename double-click). */
