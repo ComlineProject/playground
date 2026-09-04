@@ -755,6 +755,68 @@ test("2b — CALL lists every function as its own block; BEHAVIOURS + CALL are r
   sim.destroy();
 });
 
+test("2g — `compare` runs the call over every framing/codec combo", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+
+  const blk = callBlock(sim.el, "send");
+  const compareBtn = [...blk.querySelectorAll(".sim-btn")].find((b) => b.textContent === "compare")!;
+  fire(compareBtn, "click");
+
+  const combos = [...blk.querySelectorAll(".compare-table tbody tr td:first-child")].map(
+    (td) => td.textContent,
+  );
+  assert.deepEqual(
+    combos.sort(),
+    ["datagram/json", "datagram/msgpack", "jsonrpc/json"],
+    "every combo Chat's framing supports",
+  );
+  assert.match(
+    blk.querySelector(".compare-note")!.textContent!,
+    /all 3 combos agree/,
+    "the decoded reply is identical across encodings",
+  );
+  assert.equal(blk.querySelectorAll(".compare-table tr.mismatch").length, 0);
+  sim.destroy();
+});
+
+test("2g — the connection inspector edits framing / wire format", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  fire(sim.el.querySelector(".sim-wire line")!, "click");
+
+  const selects = () => [...sim.el.querySelectorAll(".sim-inspector select")] as HTMLSelectElement[];
+  const framingSel = () => selects().find((s) => [...s.options].some((o) => o.value === "jsonrpc"))!;
+  const wireSel = () => selects().find((s) => [...s.options].some((o) => o.value === "msgpack"))!;
+
+  assert.equal(framingSel().value, "auto", "starts on auto");
+  assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /auto → datagram/);
+
+  pick(wireSel(), "msgpack");
+  await tick();
+  assert.equal(wireSel().value, "msgpack", "the change stuck after the re-render");
+
+  pick(framingSel(), "jsonrpc");
+  await tick();
+  assert.equal(wireSel().disabled, true, "jsonrpc framing locks the wire format to json");
+  assert.equal(wireSel().value, "json");
+  sim.destroy();
+});
+
 test("2c — the fault inspector drops responses: the edge goes faulty and the call times out", async () => {
   const sim = createSim();
   document.body.append(sim.el);

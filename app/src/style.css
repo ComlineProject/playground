@@ -894,6 +894,45 @@ body.mode-simulate #gen-controls {
   font-size: 0.8rem;
   color: var(--accent);
 }
+.call-btns {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+/* 2g — the compare-across-framings result: a verdict line + a small table */
+.compare-out:empty {
+  display: none;
+}
+.compare-note {
+  margin: 0.6rem 0 0.3rem;
+  font-size: 0.72rem;
+}
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+  margin-bottom: 0.3rem;
+}
+.compare-table th,
+.compare-table td {
+  padding: 0.2rem 0.4rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.compare-table th {
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: uppercase;
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+}
+.compare-table td:nth-child(2) {
+  text-align: right;
+  color: var(--muted);
+}
+.compare-table tr.mismatch td {
+  color: var(--err);
+}
 /* a short, centred rule between repeated blocks (call fns, behaviour rows) */
 .insp-sep {
   width: 45%;
