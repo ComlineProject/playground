@@ -214,8 +214,8 @@ function place(sim: { el: HTMLElement }) {
 
 /** The CALL tab lists every function as its own block — grab one by name. */
 function callBlock(root: ParentNode, fn: string): HTMLElement {
-  return [...root.querySelectorAll(".call-block")].find((b) =>
-    b.querySelector(".call-fn-name")!.textContent!.startsWith(`${fn}(`),
+  return [...root.querySelectorAll(".call-block")].find(
+    (b) => b.querySelector(".call-fn-name")!.textContent === fn,
   ) as HTMLElement;
 }
 /** Click `send` in one function's CALL block; returns that block's output. */
@@ -701,7 +701,7 @@ test("2b — CALL lists every function as its own block; BEHAVIOURS + CALL are r
   assert.equal(call.querySelectorAll(".call-fn").length, 0, "the fn <select> is gone");
   assert.deepEqual(
     [...call.querySelectorAll(".call-fn-name")].map((n) => n.textContent),
-    ["send(text)", "note(text)"],
+    ["send", "note"],
     "a titled block per function, in declaration order",
   );
   assert.equal(call.querySelectorAll(".call-block").length, 2);

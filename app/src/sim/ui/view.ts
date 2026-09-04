@@ -1340,7 +1340,7 @@ export function createSim(opts: SimOpts = {}): SimView {
       const b = div("call-block");
       const name = document.createElement("div");
       name.className = "call-fn-name mono";
-      name.textContent = `${fn.name}(${fn.args.map((a) => a.name).join(", ")})`;
+      name.textContent = fn.name;
       b.append(name);
 
       const form = argsForm(fn.args, found.schema);
