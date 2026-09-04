@@ -172,18 +172,19 @@ export function frameLog(): FrameLog {
   // column header — same grid as each row's `<summary>` (see the CSS)
   const cols = document.createElement("div");
   cols.className = "sim-frames-cols";
-  for (const [cls, label] of [
-    ["frame-conn", "conn"],
-    ["frame-seq", "#"],
-    ["frame-dir", "direction"],
-    ["frame-kind", "kind"],
-    ["frame-fn", "fn"],
-    ["frame-delta", "rtt"],
-    ["frame-len", "bytes"],
+  for (const [cls, label, hint] of [
+    ["frame-conn", "conn", "which connection this frame is on"],
+    ["frame-seq", "#", "frame number, in the order they crossed the wire"],
+    ["frame-dir", "direction", "sender → receiver (instance names)"],
+    ["frame-kind", "kind", "handshake, request, or response"],
+    ["frame-fn", "function", "the protocol function this frame belongs to"],
+    ["frame-delta", "rtt", "round-trip time — on the response, measured from its own request"],
+    ["frame-len", "bytes", "encoded size of the frame on the wire"],
   ] as const) {
     const s = document.createElement("span");
     s.className = cls;
     s.textContent = label;
+    s.title = hint;
     cols.append(s);
   }
 
