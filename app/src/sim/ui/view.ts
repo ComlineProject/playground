@@ -72,6 +72,21 @@ interface Model {
   clockMode: "real" | "stepped";
 }
 
+/** A settled call's outcome, as `Sim.result()` / `Sim.compare()` report it. */
+interface CallOutcome {
+  status: string;
+  value?: unknown;
+  ordinal?: number;
+  body?: unknown;
+  message?: string;
+}
+/** One `Sim.compare()` entry — the frames a framing/codec combo produced, and
+ *  the decoded outcome. */
+interface CompareEntry {
+  frames: Frame[];
+  result: CallOutcome;
+}
+
 /** A `Sim.record_stop()` payload. */
 export interface Recording {
   v: number;
@@ -1046,9 +1061,10 @@ export function createSim(opts: SimOpts = {}): SimView {
     const server = inst(conn.serverId);
     const err = sim.connection_error(conn.id);
     const dead = sim.connection_dead(conn.id);
-    const framing = conn.framing === "auto"
-      ? findProtocol(shape!, server?.schemaNs ?? "", server?.protocol ?? "")?.protocol.framing ?? "?"
-      : conn.framing;
+    const resolvedFraming =
+      conn.framing === "auto"
+        ? (findProtocol(shape!, server?.schemaNs ?? "", server?.protocol ?? "")?.protocol.framing ?? "?")
+        : conn.framing;
     const status = document.createElement("span");
     const dot = document.createElement("span");
     dot.className = `conn-dot ${err || dead ? "err" : "ok"}`;
@@ -1059,7 +1075,6 @@ export function createSim(opts: SimOpts = {}): SimView {
       facts([
         ["client", client?.name ?? conn.clientId],
         ["server", server?.name ?? conn.serverId],
-        ["framing", framing],
         ["status", status],
       ]),
     );
@@ -1072,6 +1087,40 @@ export function createSim(opts: SimOpts = {}): SimView {
           redraw();
         }),
       );
+    }
+
+    // ── transport (2g) ── framing / wire format; `compare` on the CALL tab
+    // runs the same call over every combo these two produce.
+    inspectorEl.append(section("transport"));
+    const framingSel = document.createElement("select");
+    framingSel.title = "auto follows the protocol's declared framing";
+    for (const v of ["auto", "datagram", "jsonrpc"] as const) {
+      framingSel.append(opt(v, v, v === conn.framing));
+    }
+    const wireSel = document.createElement("select");
+    wireSel.title = "jsonrpc framing is JSON-only";
+    for (const v of ["json", "msgpack"] as const) wireSel.append(opt(v, v, v === conn.wireFormat));
+    const syncWireFormat = () => {
+      wireSel.disabled = selValue(framingSel) === "jsonrpc";
+      if (wireSel.disabled) {
+        // clear every option first, then select exactly one — some DOM
+        // implementations mis-track the selection if true/false interleave
+        for (const o of wireSel.options) o.selected = false;
+        const json = [...wireSel.options].find((o) => o.value === "json");
+        if (json) json.selected = true;
+      }
+    };
+    syncWireFormat();
+    const pushTransport = () => {
+      syncWireFormat();
+      sim!.set_transport(conn.id, selValue(framingSel), selValue(wireSel));
+      redraw();
+    };
+    framingSel.addEventListener("change", pushTransport);
+    wireSel.addEventListener("change", pushTransport);
+    inspectorEl.append(row("framing", framingSel), row("wire format", wireSel));
+    if (conn.framing === "auto") {
+      inspectorEl.append(muted(`auto → ${resolvedFraming} for this protocol`));
     }
 
     inspectorEl.append(section("faults"));
@@ -1334,8 +1383,9 @@ export function createSim(opts: SimOpts = {}): SimView {
     }
     const pickConn = () => (connSel ? selValue(connSel) || liveConns[0]?.id : liveConns[0]?.id);
 
-    // one self-contained block per function: its args, a send button, and the
-    // reply it produced — separated by a short centred rule
+    // one self-contained block per function: its args, send + compare buttons,
+    // the reply, and (2g) how it looks over every framing/codec — separated by
+    // a short centred rule
     const block = (fn: FnShape) => {
       const b = div("call-block");
       const name = document.createElement("div");
@@ -1349,9 +1399,10 @@ export function createSim(opts: SimOpts = {}): SimView {
       b.append(host);
 
       const out = div("call-out mono");
-      b.append(out);
+      const compareOut = div("compare-out");
 
-      b.append(
+      const btns = div("call-btns");
+      btns.append(
         button("send", "primary", () => {
           const connId = pickConn();
           if (!connId || !sim) return;
@@ -1377,7 +1428,31 @@ export function createSim(opts: SimOpts = {}): SimView {
           if (clockMode === "real") sim.run();
           afterAdvance();
         }),
+        button("compare", "", () => {
+          const connId = pickConn();
+          if (!connId || !sim) return;
+          let params: unknown;
+          try {
+            params = form.read();
+          } catch (e) {
+            compareOut.replaceChildren(muted((e as Error).message, "err"));
+            return;
+          }
+          let raw: string;
+          try {
+            raw = sim.compare(connId, fn.name, JSON.stringify(params));
+          } catch (e) {
+            compareOut.replaceChildren(muted(String((e as Error).message ?? e), "err"));
+            return;
+          }
+          renderCompare(compareOut, JSON.parse(raw) as Record<string, CompareEntry>);
+        }),
       );
+      btns.lastElementChild!.setAttribute(
+        "title",
+        "run this call over every framing/codec combo and compare the replies",
+      );
+      b.append(btns, out, compareOut);
       return b;
     };
 
@@ -1526,6 +1601,61 @@ function button(text: string, variant: string, onClick: () => void): HTMLButtonE
   b.textContent = text;
   b.addEventListener("click", onClick);
   return b;
+}
+/** 2g — `Sim.compare()`'s per-framing/codec results: a one-line agree/disagree
+ *  verdict (the whole point of comparing — the encodings should be behaviourally
+ *  transparent), then a table of combo → wire bytes → decoded outcome. */
+function renderCompare(host: HTMLElement, combos: Record<string, CompareEntry>): void {
+  host.replaceChildren();
+  const entries = Object.entries(combos);
+  if (!entries.length) {
+    host.append(muted("no framing/codec combo applies here"));
+    return;
+  }
+  const outcomeText = (r: CallOutcome): string => {
+    if (r.status === "ok") {
+      return r.value === null || r.value === undefined ? "(no reply)" : JSON.stringify(r.value);
+    }
+    if (r.status === "err") return `err ${r.ordinal} · ${JSON.stringify(r.body)}`;
+    if (r.status === "timeout") return "timeout";
+    return r.message ?? r.status;
+  };
+  const canon = entries.map(([, v]) => JSON.stringify(v.result));
+  const agree = canon.every((c) => c === canon[0]);
+
+  const note = document.createElement("p");
+  note.className = `compare-note ${agree ? "ok" : "err"}`;
+  note.textContent = agree
+    ? `✓ all ${entries.length} combos agree`
+    : "⚠ combos disagree — not behaviourally transparent";
+  host.append(note);
+
+  const table = document.createElement("table");
+  table.className = "compare-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const label of ["combo", "bytes", "result"]) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    headRow.append(th);
+  }
+  thead.append(headRow);
+  const tbody = document.createElement("tbody");
+  entries.forEach(([combo, v], i) => {
+    const r = document.createElement("tr");
+    if (!agree && canon[i] !== canon[0]) r.classList.add("mismatch");
+    const bytes = v.frames
+      .filter((f) => f.kind !== "handshake")
+      .reduce((n, f) => n + f.bytes.length, 0);
+    for (const text of [combo, `${bytes} B`, outcomeText(v.result)]) {
+      const c = document.createElement("td");
+      c.textContent = text;
+      r.append(c);
+    }
+    tbody.append(r);
+  });
+  table.append(thead, tbody);
+  host.append(table);
 }
 function selValue(sel: HTMLSelectElement): string {
   return (
