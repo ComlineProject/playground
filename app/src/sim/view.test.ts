@@ -101,18 +101,12 @@ test("1d — place, connect, call, and see the reply and frames", async () => {
   await tick();
 
   // the call form appears; send `send`
-  const fnSel = sim.el.querySelector(".call-fn") as HTMLSelectElement;
-  assert.ok(fnSel, "call form is shown for a connected client");
-  pick(fnSel, "send");
-  const textInput = sim.el.querySelector(".call-args .arg-input") as HTMLInputElement;
-  textInput.value = "hello";
-  const sendBtn = [...sim.el.querySelectorAll(".call-form .sim-btn")].find(
-    (b) => b.textContent === "send",
-  ) as HTMLButtonElement;
-  fire(sendBtn, "click");
+  const sendBlk = callBlock(sim.el, "send");
+  assert.ok(sendBlk, "call form is shown for a connected client");
+  (sendBlk.querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
+  const out = fireSend(sim.el, "send");
   await tick();
 
-  const out = sim.el.querySelector(".call-out")!;
   assert.match(out.textContent!, /"body": "HI"/);
   assert.ok(out.classList.contains("ok"));
 
@@ -195,14 +189,9 @@ test("1d — flipping the server to Raise error surfaces the mapped error", asyn
   pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
   await tick();
 
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  const sendBtn = [...sim.el.querySelectorAll(".call-form .sim-btn")].find(
-    (b) => b.textContent === "send",
-  ) as HTMLButtonElement;
-  fire(sendBtn, "click");
+  const out = fireSend(sim.el, "send");
   await tick();
 
-  const out = sim.el.querySelector(".call-out")!;
   assert.match(out.textContent!, /Rejected/);
   assert.match(out.textContent!, /denied/);
   assert.ok(out.classList.contains("err"));
@@ -221,6 +210,19 @@ function place(sim: { el: HTMLElement }) {
     server: nodes.find((n) => n.classList.contains("role-server"))!,
     client: nodes.find((n) => n.classList.contains("role-client"))!,
   };
+}
+
+/** The CALL tab lists every function as its own block — grab one by name. */
+function callBlock(root: ParentNode, fn: string): HTMLElement {
+  return [...root.querySelectorAll(".call-block")].find((b) =>
+    b.querySelector(".call-fn-name")!.textContent!.startsWith(`${fn}(`),
+  ) as HTMLElement;
+}
+/** Click `send` in one function's CALL block; returns that block's output. */
+function fireSend(root: ParentNode, fn: string): Element {
+  const b = callBlock(root, fn);
+  fire([...b.querySelectorAll(".sim-btn")].find((x) => x.textContent === "send")!, "click");
+  return b.querySelector(".call-out")!;
 }
 
 test("polish — dropped nodes are absolutely placed and don't stack", () => {
@@ -253,7 +255,7 @@ test("polish — drag from a node's port to another node connects them", async (
   await tick();
 
   assert.ok(sim.el.querySelector(".sim-wire .wire-live"), "the wire is live");
-  assert.ok(sim.el.querySelector(".call-fn"), "the client's call form is shown");
+  assert.ok(sim.el.querySelector(".call-block"), "the client's call form is shown");
   sim.destroy();
 });
 
@@ -270,11 +272,7 @@ test("polish — the frame filter hides a kind and restores it", async () => {
   fire(client, "click");
   pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
   await tick();
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-    "click",
-  );
+  fireSend(sim.el, "send");
   await tick();
 
   const rows = () => [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
@@ -307,12 +305,7 @@ test("polish — `clear` drops the log and stays cleared until new frames arrive
   fire(client, "click");
   pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
   await tick();
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  const send = () =>
-    fire(
-      [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-      "click",
-    );
+  const send = () => fireSend(sim.el, "send");
 
   send();
   await tick();
@@ -342,11 +335,7 @@ test("polish — round-trip time shows on the reply, blank on the request", asyn
   fire(client, "click");
   pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
   await tick();
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-    "click",
-  );
+  fireSend(sim.el, "send");
   await tick();
 
   const rows = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
@@ -376,11 +365,7 @@ test("polish — a long gap in virtual time inserts a filterable idle separator"
   fire(client, "click");
   pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
   await tick();
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-    "click",
-  );
+  fireSend(sim.el, "send");
   await tick();
 
   const idle = sim.el.querySelector(".sim-frames-list .frame-idle") as HTMLElement;
@@ -413,10 +398,6 @@ test("2a — fan-out: one server, two clients, two connections; drop one, the ot
   const serverId = all.find((n) => n.classList.contains("role-server"))!.dataset.id!;
   const clientIds = all.filter((n) => n.classList.contains("role-client")).map((n) => n.dataset.id!);
   const node = (id: string) => sim.el.querySelector(`.sim-node[data-id="${id}"]`) as HTMLElement;
-  const sendBtn = () =>
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find(
-      (b) => b.textContent === "send",
-    ) as HTMLButtonElement;
 
   // server replies with a constant
   fire(node(serverId), "click");
@@ -436,10 +417,9 @@ test("2a — fan-out: one server, two clients, two connections; drop one, the ot
   // each client calls send and gets the reply
   for (const cid of clientIds) {
     fire(node(cid), "click");
-    pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-    fire(sendBtn(), "click");
+    const out = fireSend(sim.el, "send");
     await tick();
-    assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "HI"/);
+    assert.match(out.textContent!, /"body": "HI"/);
   }
   const conns = new Set(
     [...sim.el.querySelectorAll(".sim-frames-list .frame-row")].map((r) => (r as HTMLElement).dataset.conn),
@@ -453,10 +433,9 @@ test("2a — fan-out: one server, two clients, two connections; drop one, the ot
   assert.equal(sim.el.querySelectorAll(".sim-wire .wire-live").length, 1, "one wire left");
 
   fire(node(clientIds[1]), "click");
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(sendBtn(), "click");
+  const out2 = fireSend(sim.el, "send");
   await tick();
-  assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "HI"/, "client 2 still works");
+  assert.match(out2.textContent!, /"body": "HI"/, "client 2 still works");
 
   sim.destroy();
 });
@@ -469,8 +448,6 @@ test("2b — a node hosts a client and a server; the grouped gateway relays a ca
   const spec = { schemaNs: "chat", protocol: "Chat" };
   const groups = () => [...sim.el.querySelectorAll(".sim-node-group")] as HTMLElement[];
   const rows = (root: ParentNode = sim.el) => [...root.querySelectorAll(".sim-node")] as HTMLElement[];
-  const sendBtn = () =>
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send") as HTMLButtonElement;
 
   // one box hosting the edge server AND the edge client — the gateway
   drop(canvas, { ...spec, role: "server" });
@@ -522,10 +499,9 @@ test("2b — a node hosts a client and a server; the grouped gateway relays a ca
 
   // caller calls send → the reply comes from the backend, through the gateway
   fire(sim.el.querySelector(`.sim-node[data-id="${caller.dataset.id}"]`)!, "click");
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(sendBtn(), "click");
+  const out = fireSend(sim.el, "send");
   await tick();
-  assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "FROM-BACKEND"/);
+  assert.match(out.textContent!, /"body": "FROM-BACKEND"/);
 
   sim.destroy();
 });
@@ -701,6 +677,44 @@ test("2b — the instance inspector is tabbed, and the active tab survives a re-
   sim.destroy();
 });
 
+test("2b — CALL lists every function as its own block; BEHAVIOURS + CALL are rule-separated", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+  const openTab = (name: string) =>
+    fire([...sim.el.querySelectorAll(".insp-tab")].find((t) => t.textContent === name)!, "click");
+
+  // BEHAVIOURS: one row per function, a short rule between them
+  fire(server, "click");
+  openTab("behaviours");
+  const beh = sim.el.querySelector('.insp-tabpanel[data-tab="behaviours"]')!;
+  assert.equal(beh.querySelectorAll(".behavior-row").length, 2, "send + note rows");
+  assert.equal(beh.querySelectorAll(".insp-sep").length, 1, "one separator between two rows");
+
+  // CALL: no fn dropdown — a self-contained block per function, rule-separated
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  openTab("call");
+  const call = sim.el.querySelector('.insp-tabpanel[data-tab="call"]')!;
+  assert.equal(call.querySelectorAll(".call-fn").length, 0, "the fn <select> is gone");
+  assert.deepEqual(
+    [...call.querySelectorAll(".call-fn-name")].map((n) => n.textContent),
+    ["send(text)", "note(text)"],
+    "a titled block per function, in declaration order",
+  );
+  assert.equal(call.querySelectorAll(".call-block").length, 2);
+  assert.equal(call.querySelectorAll(".insp-sep").length, 1, "one rule between the two blocks");
+
+  // each block sends on its own
+  (callBlock(sim.el, "send").querySelector(".call-args .arg-input") as HTMLInputElement).value = "yo";
+  const out = fireSend(sim.el, "send");
+  await tick();
+  assert.doesNotMatch(out.textContent ?? "", /undecodable|error/i, "the send block calls `send`");
+  sim.destroy();
+});
+
 test("2c — the fault inspector drops responses: the edge goes faulty and the call times out", async () => {
   const sim = createSim();
   document.body.append(sim.el);
@@ -739,13 +753,9 @@ test("2c — the fault inspector drops responses: the edge goes faulty and the c
 
   // now call from the client and watch it time out
   fire(client, "click");
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-    "click",
-  );
+  const out = fireSend(sim.el, "send");
   await tick(220);
-  assert.match(sim.el.querySelector(".call-out")!.textContent!, /timeout/i);
+  assert.match(out.textContent!, /timeout/i);
 
   // a dropped response frame is greyed / labelled in the log
   const dropped = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")].find((r) =>
@@ -789,13 +799,9 @@ test("2d — stepped clock: a delayed reply lands only after the step button is 
 
   // call — it should hang while the clock is paused
   fire(client, "click");
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-    "click",
-  );
+  const outEl = fireSend(sim.el, "send");
   await tick(40);
-  const out = () => sim.el.querySelector(".call-out")!.textContent ?? "";
+  const out = () => outEl.textContent ?? "";
   assert.doesNotMatch(out(), /"body": "HI"/, "nothing lands while paused");
 
   const stepBtn = () =>
@@ -856,13 +862,9 @@ test("2e — a serialized session restores its nodes, connections and live wires
   // and a call over a restored wire still works
   const rClient = [...restored.el.querySelectorAll(".sim-node.role-client")][0] as HTMLElement;
   fire(rClient, "click");
-  pick(restored.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(
-    [...restored.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-    "click",
-  );
+  const out = fireSend(restored.el, "send");
   await tick();
-  assert.match(restored.el.querySelector(".call-out")!.textContent!, /"body": "SHARED"/);
+  assert.match(out.textContent!, /"body": "SHARED"/);
   restored.destroy();
 });
 
@@ -894,13 +896,9 @@ test("2e — record a call through the UI, then replay it", async () => {
 
   // send a call — captured
   fire(client, "click");
-  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-  fire(
-    [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-    "click",
-  );
+  const out = fireSend(sim.el, "send");
   await tick(30);
-  assert.match(sim.el.querySelector(".call-out")!.textContent!, /"body": "REC"/);
+  assert.match(out.textContent!, /"body": "REC"/);
 
   // stop → a replay button appears
   fire(clockBtn("■ stop"), "click");
@@ -955,15 +953,11 @@ test(
     fire(client, "click");
     pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
     await tick();
-    pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
-    (sim.el.querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
-    fire(
-      [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
-      "click",
-    );
+    const blk = callBlock(sim.el, "send");
+    (blk.querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
+    const out = fireSend(sim.el, "send");
     await tick(40);
 
-    const out = sim.el.querySelector(".call-out")!;
     assert.match(out.textContent!, /"body": "hello!"/);
     assert.match(out.textContent!, /"seq": 7/);
     assert.ok(out.classList.contains("ok"));
