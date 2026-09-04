@@ -1,10 +1,11 @@
 /// The frame inspector under the canvas. It merges the frame logs of every live
-/// connection into one time-ordered list under a labelled column header — a row
-/// per frame: connection (when there is more than one), direction, kind,
-/// function, round-trip time (on the reply, from its own request by id), byte
-/// length — expanding to the decoded envelope, the framing name, and the raw
-/// bytes as hex or text. A gap in *virtual* time over `IDLE_MS` inserts an
-/// `idle` separator. Every row kind and every connection is filterable from the
+/// connection into one time-ordered `<table>` with a sticky header — a row per
+/// frame: connection (when there is more than one), direction, kind, function,
+/// round-trip time (on the reply, from its own request by id), byte length. Each
+/// frame is its own `<tbody>`: a summary row that expands (click / Enter) to a
+/// detail row with the decoded envelope, the framing name, and the raw bytes as
+/// hex or text. A gap in *virtual* time over `IDLE_MS` inserts an `idle`
+/// separator row. Every row kind and every connection is filterable from the
 /// header. A refused connection gets its own row. The pane's height is
 /// drag-resizable by its top grip.
 ///
@@ -169,28 +170,44 @@ export function frameLog(): FrameLog {
   clear.textContent = "clear";
   head.append(title, kindFilters, connFilters, clockBar, clear);
 
-  // column header — same grid as each row's `<summary>` (see the CSS)
-  const cols = document.createElement("div");
-  cols.className = "sim-frames-cols";
-  for (const [cls, label, hint] of [
-    ["frame-conn", "conn", "which connection this frame is on"],
-    ["frame-seq", "#", "frame number, in the order they crossed the wire"],
-    ["frame-dir", "direction", "sender → receiver (instance names)"],
-    ["frame-kind", "kind", "handshake, request, or response"],
-    ["frame-fn", "function", "the protocol function this frame belongs to"],
-    ["frame-delta", "rtt", "round-trip time — on the response, measured from its own request"],
-    ["frame-len", "bytes", "encoded size of the frame on the wire"],
-  ] as const) {
-    const s = document.createElement("span");
-    s.className = cls;
-    s.textContent = label;
-    s.title = hint;
-    cols.append(s);
+  // ── the table ───────────────────────────────────────────────────────
+  // one real <table>: a sticky <thead>, then a <tbody> per frame. Fixed
+  // layout + explicit widths on the narrow columns keep it aligned; the
+  // `direction` and `function` columns share the slack.
+  const COLS = [
+    ["frame-conn", "conn", "which connection this frame is on", "8rem"],
+    ["frame-seq", "#", "frame number, in the order they crossed the wire", "3rem"],
+    ["frame-dir", "direction", "sender → receiver (instance names)", ""],
+    ["frame-kind", "kind", "handshake, request, or response", "6rem"],
+    ["frame-fn", "function", "the protocol function this frame belongs to", ""],
+    ["frame-delta", "rtt", "round-trip time — on the response, from its own request", "5rem"],
+    ["frame-len", "bytes", "encoded size of the frame on the wire", "4rem"],
+  ] as const;
+
+  const table = document.createElement("table");
+  table.className = "sim-frames-table";
+  const thead = document.createElement("thead");
+  table.append(thead);
+
+  function renderHead() {
+    const cols = multi ? COLS : COLS.slice(1);
+    const tr = document.createElement("tr");
+    for (const [cls, label, hint, width] of cols) {
+      const th = document.createElement("th");
+      th.className = cls;
+      th.textContent = label;
+      th.title = hint;
+      if (width) th.style.width = width;
+      tr.append(th);
+    }
+    thead.replaceChildren(tr);
   }
+  const colCount = () => (multi ? COLS.length : COLS.length - 1);
 
   const list = document.createElement("div");
   list.className = "sim-frames-list";
-  el.append(grip, head, cols, list);
+  list.append(table);
+  el.append(grip, head, list);
 
   let sources: LogSource[] = [];
   let api: FrameSource = { frames: () => [], detail: () => null };
@@ -201,7 +218,9 @@ export function frameLog(): FrameLog {
   let multi = false;
 
   function applyFilter() {
-    for (const r of list.querySelectorAll<HTMLElement>(".frame-row, .frame-idle")) {
+    for (const r of table.querySelectorAll<HTMLElement>(
+      "tbody.frame-row, tbody.frame-idle, tbody.frame-refused",
+    )) {
       const byKind = hidden.has(r.dataset.kind ?? "");
       const byConn = r.dataset.conn ? hiddenConns.has(r.dataset.conn) : false;
       r.hidden = byKind || byConn;
@@ -228,12 +247,14 @@ export function frameLog(): FrameLog {
     const detail = api.detail(connId, f.seq) ?? { kind: f.kind, framing: "?" };
 
     if (lastAt !== null && f.at - lastAt > IDLE_MS) {
-      const sep = document.createElement("div");
+      const sep = document.createElement("tbody");
       sep.className = "frame-idle";
       sep.dataset.kind = "idle";
       sep.hidden = hidden.has("idle");
-      sep.textContent = `⋯ ${humanGap(f.at - lastAt)} idle`;
-      list.append(sep);
+      const line = td("frame-idle-line", `⋯ ${humanGap(f.at - lastAt)} idle`);
+      line.colSpan = colCount();
+      sep.append(tr(line));
+      table.append(sep);
     }
     lastAt = f.at;
 
@@ -248,29 +269,54 @@ export function frameLog(): FrameLog {
     }
 
     const dropped = /dropped/.test(f.fault ?? "");
-    const row = document.createElement("details");
-    row.className = `frame-row frame-${detail.kind}${multi ? " has-conn" : ""}${
-      f.fault ? " frame-faulted" : ""
-    }${dropped ? " frame-dropped" : ""}`;
+    const row = document.createElement("tbody");
+    row.className = `frame-row frame-${detail.kind}${f.fault ? " frame-faulted" : ""}${
+      dropped ? " frame-dropped" : ""
+    }`;
     row.dataset.kind = detail.kind;
     row.dataset.conn = connId;
     row.hidden = hidden.has(detail.kind) || hiddenConns.has(connId);
 
-    const summary = document.createElement("summary");
-    const rtt = cell("frame-delta", rttText);
+    const summary = document.createElement("tr");
+    summary.className = "frame-summary";
+    summary.tabIndex = 0;
+    summary.setAttribute("role", "button");
+    summary.setAttribute("aria-expanded", "false");
+    const rtt = td("frame-delta", rttText);
     if (rttText) rtt.title = "round-trip time";
     const kindText = f.fault ? `${detail.kind} · ${f.fault}` : detail.kind;
     const cells = [
-      cell("frame-seq", String(f.seq).padStart(3, "0")),
-      cell("frame-dir", `${f.from} → ${f.to}`),
-      cell("frame-kind", kindText),
-      cell("frame-fn", detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : "")),
+      td("frame-seq", String(f.seq).padStart(3, "0")),
+      td("frame-dir", `${f.from} → ${f.to}`),
+      td("frame-kind", kindText),
+      td("frame-fn", detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : "")),
       rtt,
-      cell("frame-len", `${f.bytes.length} B`),
+      td("frame-len", `${f.bytes.length} B`),
     ];
-    if (multi) cells.unshift(cell("frame-conn", labelByConn.get(connId) ?? connId));
+    if (multi) cells.unshift(td("frame-conn", labelByConn.get(connId) ?? connId));
     summary.append(...cells);
     row.append(summary);
+
+    const detailTd = document.createElement("td");
+    detailTd.colSpan = colCount();
+    const detailRow = tr(detailTd);
+    detailRow.className = "frame-detail";
+    detailRow.hidden = true;
+    row.append(detailRow);
+
+    const toggle = () => {
+      const open = detailRow.hidden;
+      detailRow.hidden = !open;
+      summary.setAttribute("aria-expanded", String(open));
+      row.classList.toggle("open", open);
+    };
+    summary.addEventListener("click", toggle);
+    summary.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
 
     const body = document.createElement("div");
     body.className = "frame-body mono";
@@ -312,17 +358,22 @@ export function frameLog(): FrameLog {
     }
     body.append(rawBtns, ...rawPanes);
 
-    row.append(body);
-    list.append(row);
+    detailTd.append(body);
+    table.append(row);
     list.scrollTop = list.scrollHeight;
   }
 
   function refusedRow(connId: string, reason: string) {
-    const r = document.createElement("div");
-    r.className = "frame-row frame-refused";
-    r.dataset.conn = connId;
-    r.textContent = `${multi ? (labelByConn.get(connId) ?? connId) + " · " : ""}connection refused · ${reason}`;
-    list.append(r);
+    const tb = document.createElement("tbody");
+    tb.className = "frame-row frame-refused";
+    tb.dataset.conn = connId;
+    const c = td(
+      "",
+      `${multi ? (labelByConn.get(connId) ?? connId) + " · " : ""}connection refused · ${reason}`,
+    );
+    c.colSpan = colCount();
+    tb.append(tr(c));
+    table.append(tb);
   }
 
   // `keepCursor`: wipe the rows on screen but leave `shownByConn` where it is,
@@ -331,7 +382,8 @@ export function frameLog(): FrameLog {
   function resetList(keepCursor = false) {
     sentAt.clear();
     lastAt = null;
-    list.replaceChildren();
+    for (const tb of table.querySelectorAll("tbody")) tb.remove();
+    list.querySelector(".frames-empty")?.remove();
     if (keepCursor) {
       for (const s of sources) shownByConn.set(s.connId, api.frames(s.connId).length);
     } else {
@@ -348,14 +400,14 @@ export function frameLog(): FrameLog {
       sources = next;
       api = next_api;
       multi = next.length > 1;
-      cols.classList.toggle("has-conn", multi);
+      renderHead();
       labelByConn.clear();
       for (const s of next) labelByConn.set(s.connId, s.label);
       renderConnFilters();
 
       if (next.length === 0) {
         const p = document.createElement("p");
-        p.className = "muted pad";
+        p.className = "muted pad frames-empty";
         p.textContent = "no connection";
         list.append(p);
         return;
@@ -488,6 +540,17 @@ function cell(cls: string, text: string): HTMLSpanElement {
   s.className = cls;
   s.textContent = text;
   return s;
+}
+function td(cls: string, text: string): HTMLTableCellElement {
+  const d = document.createElement("td");
+  if (cls) d.className = cls;
+  d.textContent = text;
+  return d;
+}
+function tr(...cells: HTMLElement[]): HTMLTableRowElement {
+  const r = document.createElement("tr");
+  r.append(...cells);
+  return r;
 }
 function kv(k: string, v: string): HTMLElement {
   const d = document.createElement("div");

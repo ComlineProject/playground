@@ -385,6 +385,46 @@ test("polish — a long gap in virtual time inserts a filterable idle separator"
   sim.destroy();
 });
 
+test("polish — the frame log is a real <table> whose rows expand in place", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  fireSend(sim.el, "send");
+  await tick();
+
+  const table = sim.el.querySelector(".sim-frames-list table.sim-frames-table") as HTMLTableElement;
+  assert.ok(table, "the log renders as a <table>");
+  assert.deepEqual(
+    [...table.querySelectorAll("thead th")].map((th) => th.textContent),
+    ["#", "direction", "kind", "function", "rtt", "bytes"],
+    "a sticky header row, one <th> per column (no conn column for a single wire)",
+  );
+
+  const row = table.querySelector("tbody.frame-row") as HTMLElement;
+  assert.equal(row.tagName, "TBODY", "each frame is its own <tbody>");
+  const summary = row.querySelector("tr.frame-summary") as HTMLElement;
+  const detail = row.querySelector("tr.frame-detail") as HTMLElement;
+  assert.equal(summary.querySelectorAll("td").length, 6, "6 cells, aligned to the header");
+  assert.ok(detail.hidden, "the detail row starts collapsed");
+  assert.equal(summary.getAttribute("aria-expanded"), "false");
+
+  fire(summary, "click");
+  assert.ok(!detail.hidden, "clicking the summary row expands the detail");
+  assert.equal(summary.getAttribute("aria-expanded"), "true");
+  assert.match(detail.querySelector(".frame-body")!.textContent!, /framing/);
+  fire(summary, "click");
+  assert.ok(detail.hidden, "clicking again collapses it");
+  sim.destroy();
+});
+
 test("2a — fan-out: one server, two clients, two connections; drop one, the other stays live", async () => {
   const sim = createSim();
   document.body.append(sim.el);
