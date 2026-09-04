@@ -782,7 +782,7 @@ test("2g — `compare` runs the call over every framing/codec combo", async () =
   );
   assert.match(
     blk.querySelector(".compare-note")!.textContent!,
-    /all 3 combos agree/,
+    /same reply on all 3 framing\/codec combinations/,
     "the decoded reply is identical across encodings",
   );
   assert.equal(blk.querySelectorAll(".compare-table tr.mismatch").length, 0);

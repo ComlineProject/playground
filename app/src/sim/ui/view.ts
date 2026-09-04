@@ -1602,9 +1602,14 @@ function button(text: string, variant: string, onClick: () => void): HTMLButtonE
   b.addEventListener("click", onClick);
   return b;
 }
-/** 2g — `Sim.compare()`'s per-framing/codec results: a one-line agree/disagree
- *  verdict (the whole point of comparing — the encodings should be behaviourally
- *  transparent), then a table of combo → wire bytes → decoded outcome. */
+/** 2g — `Sim.compare()` sends this exact call again over a throwaway
+ *  connection for every `framing × wire-codec` combination the protocol
+ *  supports (e.g. `datagram/json`, `jsonrpc/json`) and reports each one's
+ *  decoded reply. They're expected to always agree — the encoding shouldn't
+ *  change what the call means — so a mismatch is a bug in one of the
+ *  framings or codecs, not a legitimate difference. Renders that verdict as
+ *  one plain-language sentence, then a table of combo → wire bytes → the
+ *  decoded reply (or error/timeout) each one produced. */
 function renderCompare(host: HTMLElement, combos: Record<string, CompareEntry>): void {
   host.replaceChildren();
   const entries = Object.entries(combos);
@@ -1626,17 +1631,22 @@ function renderCompare(host: HTMLElement, combos: Record<string, CompareEntry>):
   const note = document.createElement("p");
   note.className = `compare-note ${agree ? "ok" : "err"}`;
   note.textContent = agree
-    ? `✓ all ${entries.length} combos agree`
-    : "⚠ combos disagree — not behaviourally transparent";
+    ? `✓ same reply on all ${entries.length} framing/codec combinations below`
+    : "⚠ this call decoded a different reply depending on framing/codec — a bug in one of them, below";
   host.append(note);
 
   const table = document.createElement("table");
   table.className = "compare-table";
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  for (const label of ["combo", "bytes", "result"]) {
+  for (const [label, hint] of [
+    ["framing / codec", "how this run of the call was framed on the wire and how its values were encoded"],
+    ["wire bytes", "size of the request + response on the wire for this combo (the handshake isn't counted)"],
+    ["reply", "the decoded reply this combo produced — or its error / timeout"],
+  ] as const) {
     const th = document.createElement("th");
     th.textContent = label;
+    th.title = hint;
     headRow.append(th);
   }
   thead.append(headRow);
