@@ -537,9 +537,9 @@ test("2b — the inspector adds a second instance to a box (a gateway without dr
   const canvas = sim.el.querySelector(".sim-canvas")!;
   drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
 
-  fire(sim.el.querySelector(".sim-node") as HTMLElement, "click");
+  fire(sim.el.querySelector(".group-cap") as HTMLElement, "click");
   const addSel = sim.el.querySelector(".add-inst-sel") as HTMLSelectElement;
-  assert.ok(addSel, "the box section offers an add-instance select");
+  assert.ok(addSel, "the box inspector offers an add-instance select");
   const clientOpt = [...addSel.options].find((o) => o.textContent === "Chat · client")!;
   pick(addSel, clientOpt.value);
   await tick();
@@ -556,7 +556,7 @@ test("2b — each instance in a shared box is individually selectable", async ()
   sim.setShape(shape());
   drop(sim.el.querySelector(".sim-canvas")!, { schemaNs: "chat", protocol: "Chat", role: "server" });
 
-  fire(sim.el.querySelector(".sim-node") as HTMLElement, "click");
+  fire(sim.el.querySelector(".group-cap") as HTMLElement, "click");
   const addSel = sim.el.querySelector(".add-inst-sel") as HTMLSelectElement;
   pick(addSel, [...addSel.options].find((o) => o.textContent === "Chat · client")!.value);
   await tick();
@@ -597,8 +597,69 @@ test("2b — a box is named `Machine N` and its header renames on double-click",
   fire(input, "blur");
   assert.equal(cap().textContent, "gateway", "the header shows the new name");
 
+  fire(cap(), "click");
+  assert.equal(
+    (sim.el.querySelector(".box-name") as HTMLInputElement).value,
+    "gateway",
+    "the box inspector edits the same name",
+  );
+  sim.destroy();
+});
+
+test("2b — the box header selects the box; a chip selects the instance; bare canvas clears it", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  drop(sim.el.querySelector(".sim-canvas")!, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  const insp = () => sim.el.querySelector(".sim-inspector")!.textContent!;
+
+  // the header → the box inspector (name field, no instance facts)
+  fire(sim.el.querySelector(".group-cap") as HTMLElement, "click");
+  assert.ok(sim.el.querySelector(".box-name"), "the box inspector shows a name field");
+  assert.ok(sim.el.querySelector(".sim-node-group.selected"), "the box is outlined");
+  assert.doesNotMatch(insp(), /ir_hash/, "no instance facts while the box is selected");
+
+  // a chip → the instance inspector, with a crumb back up to the box
   fire(sim.el.querySelector(".sim-node") as HTMLElement, "click");
-  assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /box · gateway/i);
+  assert.match(insp(), /ir_hash/, "the instance facts are back");
+  const crumb = sim.el.querySelector(".insp-crumb") as HTMLElement;
+  assert.match(crumb.textContent!, /in box/i);
+  assert.equal(sim.el.querySelectorAll(".sim-node-group.selected").length, 0);
+
+  // the crumb → back to the box
+  fire(crumb, "click");
+  assert.ok(sim.el.querySelector(".box-name"), "the crumb reselects the box");
+
+  // bare canvas → nothing selected
+  fire(sim.el.querySelector(".sim-canvas") as HTMLElement, "click");
+  assert.match(insp(), /select a box/);
+  sim.destroy();
+});
+
+test("2b — `remove box` deletes the box and all its instances", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const canvas = sim.el.querySelector(".sim-canvas")!;
+  drop(canvas, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  fire(sim.el.querySelector(".group-cap") as HTMLElement, "click");
+  pick(
+    sim.el.querySelector(".add-inst-sel") as HTMLSelectElement,
+    [...(sim.el.querySelector(".add-inst-sel") as HTMLSelectElement).options].find(
+      (o) => o.textContent === "Chat · client",
+    )!.value,
+  );
+  await tick();
+  assert.equal(sim.el.querySelectorAll(".sim-node").length, 2, "a two-instance box");
+
+  fire(
+    [...sim.el.querySelectorAll(".sim-inspector .sim-btn")].find(
+      (b) => b.textContent === "remove box",
+    )!,
+    "click",
+  );
+  assert.equal(sim.el.querySelectorAll(".sim-node-group").length, 0, "the box is gone");
+  assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /select a box/);
   sim.destroy();
 });
 

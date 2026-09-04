@@ -1,8 +1,11 @@
 /// The full-width simulate view: a palette of protocol × role, a canvas of node
 /// boxes (each hosting one or more instances), the connections between
-/// instances, an inspector (instance facts, per-function behaviours,
-/// per-connection controls, and — for a connected client — the call form), and
-/// the merged frame list.
+/// instances, an inspector, and the merged frame list. The inspector follows the
+/// canvas selection — a box (its name, instances, add / remove), an instance
+/// (facts, per-function behaviours, per-connection controls, and — for a
+/// connected client — the call form), or a connection (framing, faults). Click a
+/// box's header to select the box, a chip to select the instance, bare canvas to
+/// clear.
 ///
 /// The engine is `comline-simulator` (Rust → WASM) now. This module holds a
 /// `Sim`, mirrors its `session_json()` for rendering, and drives it — a call is
@@ -114,6 +117,7 @@ export function createSim(opts: SimOpts = {}): SimView {
   let clockMode: "real" | "stepped" = "real";
   let selectedId: string | null = null;
   let selectedConnId: string | null = null;
+  let selectedNodeId: string | null = null;
   let callForm: ArgsForm | null = null;
   let lastRecording: Recording | null = null;
   let playHandle: ReturnType<typeof setInterval> | null = null;
@@ -282,7 +286,15 @@ export function createSim(opts: SimOpts = {}): SimView {
     const id = sim.add_instance(JSON.stringify(place));
     selectedId = id;
     selectedConnId = null;
+    selectedNodeId = null;
     redraw();
+  });
+
+  // a click on the bare canvas (not a box, not a wire) clears the selection
+  canvasEl.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement | null;
+    if (t?.closest(".sim-node-group") || t?.closest("line")) return;
+    clearSelection();
   });
 
   function nodeEl(instanceId: string): HTMLElement | null {
@@ -293,14 +305,43 @@ export function createSim(opts: SimOpts = {}): SimView {
   function select(id: string) {
     selectedId = id;
     selectedConnId = null;
-    renderCanvas();
+    selectedNodeId = null;
+    repaintSelection();
     renderInspector();
   }
   function selectConn(connId: string) {
     selectedConnId = connId;
     selectedId = null;
-    renderCanvas();
+    selectedNodeId = null;
+    repaintSelection();
     renderInspector();
+  }
+  /** Select the box itself (its header / chrome), not an instance inside it. */
+  function selectNode(nodeId: string) {
+    selectedNodeId = nodeId;
+    selectedId = null;
+    selectedConnId = null;
+    repaintSelection();
+    renderInspector();
+  }
+  function clearSelection() {
+    if (!selectedId && !selectedConnId && !selectedNodeId) return;
+    selectedId = selectedConnId = selectedNodeId = null;
+    repaintSelection();
+    renderInspector();
+  }
+
+  /** Selection is just additive classes on the canvas — toggle them in place
+   *  rather than rebuilding every box (which would drop a mid-gesture element,
+   *  e.g. the header between the two clicks of a rename double-click). */
+  function repaintSelection() {
+    for (const n of canvasEl.querySelectorAll<HTMLElement>(".sim-node")) {
+      n.classList.toggle("selected", n.dataset.id === selectedId);
+    }
+    for (const g of canvasEl.querySelectorAll<HTMLElement>(".sim-node-group")) {
+      g.classList.toggle("selected", g.dataset.nodeId === selectedNodeId);
+    }
+    drawWires();
   }
 
   function renderCanvas() {
@@ -316,11 +357,13 @@ export function createSim(opts: SimOpts = {}): SimView {
     g.dataset.nodeId = nd.id;
     g.style.left = `${nd.x}px`;
     g.style.top = `${nd.y}px`;
+    if (nd.id === selectedNodeId) g.classList.add("selected");
 
     const cap = div("group-cap mono");
     const count = nd.instanceIds.length > 1 ? ` · ${nd.instanceIds.length}` : "";
     cap.textContent = nd.label + count;
-    cap.title = "double-click to rename";
+    cap.title = "click to select the box · double-click to rename";
+    cap.addEventListener("click", () => selectNode(nd.id));
     cap.addEventListener("dblclick", (e) => {
       e.stopPropagation();
       const input = document.createElement("input");
@@ -407,9 +450,11 @@ export function createSim(opts: SimOpts = {}): SimView {
       if (moved && sim) {
         sim.move_node(nd.id, nx, ny);
         refresh();
-      } else if (rowId) {
-        select(rowId);
       }
+      // A press that grabbed an instance row selects that instance; grabbing
+      // the box chrome (or dragging it) selects the box itself.
+      if (rowId) select(rowId);
+      else selectNode(nd.id);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -665,6 +710,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     sim.load_replay(JSON.stringify(rec), shapeJson);
     selectedId = null;
     selectedConnId = null;
+    selectedNodeId = null;
     refresh();
     renderPalette();
     flog.setSources(logSources(), frameApi);
@@ -705,10 +751,14 @@ export function createSim(opts: SimOpts = {}): SimView {
       renderConnInspector(selectedConnId);
       return;
     }
+    if (selectedNodeId) {
+      renderNodeInspector(selectedNodeId);
+      return;
+    }
 
     const sel = selectedId ? inst(selectedId) : null;
     if (!sel) {
-      inspectorEl.append(muted("select an instance, or a connection"));
+      inspectorEl.append(muted("select a box, an instance, or a connection"));
       return;
     }
     const found = findProtocol(shape, sel.schemaNs, sel.protocol);
@@ -717,8 +767,17 @@ export function createSim(opts: SimOpts = {}): SimView {
       return;
     }
 
+    inspectorEl.append(section("instance"));
+    const box = node(sel.nodeId);
+    if (box) {
+      const crumb = document.createElement("button");
+      crumb.className = "insp-crumb";
+      crumb.textContent = `▸ in box ${box.label}`;
+      crumb.title = "select the box";
+      crumb.addEventListener("click", () => selectNode(box.id));
+      inspectorEl.append(crumb);
+    }
     inspectorEl.append(
-      section("instance"),
       facts([
         ["name", sel.name],
         ["protocol", sel.protocol],
@@ -748,41 +807,6 @@ export function createSim(opts: SimOpts = {}): SimView {
         redraw();
       }),
     );
-
-    // ── this box (add a second instance → a gateway) ──
-    const nd = node(sel.nodeId);
-    if (nd) {
-      inspectorEl.append(section(`box · ${nd.label}`));
-      if (nd.instanceIds.length > 1) {
-        inspectorEl.append(
-          muted(
-            `${nd.instanceIds.length} instances: ` +
-              nd.instanceIds.map((id) => inst(id)?.name ?? id).join(", "),
-          ),
-        );
-      }
-      const addSel = document.createElement("select");
-      addSel.className = "add-inst-sel";
-      addSel.append(opt("", "+ add instance to this box…", true));
-      for (const schema of shape.schemas) {
-        for (const p of schema.protocols) {
-          for (const role of ["server", "client"] as Role[]) {
-            addSel.append(opt(`${schema.namespace}|${p.name}|${role}`, `${p.name} · ${role}`));
-          }
-        }
-      }
-      addSel.addEventListener("change", () => {
-        const v = selValue(addSel);
-        if (!v) return;
-        const [schemaNs, protocol, role] = v.split("|");
-        const id = sim!.add_instance(
-          JSON.stringify({ schemaNs, protocol, role, nodeId: nd.id }),
-        );
-        selectedId = id;
-        redraw();
-      });
-      inspectorEl.append(row("add", addSel));
-    }
 
     // ── connections ──
     inspectorEl.append(section("connections"));
@@ -866,6 +890,84 @@ export function createSim(opts: SimOpts = {}): SimView {
     if (sel.role === "client" && connsFor(sel.id).some((c) => live(c.id))) {
       inspectorEl.append(renderCallForm(sel));
     }
+  }
+
+  /** The box itself: its name, the instances it hosts (each selectable), a way
+   *  to add another (→ a gateway), and a cascading delete. */
+  function renderNodeInspector(nodeId: string) {
+    const nd = node(nodeId);
+    if (!nd || !shape) {
+      selectedNodeId = null;
+      inspectorEl.append(muted("box is gone"));
+      return;
+    }
+
+    inspectorEl.append(section("box"));
+    const name = document.createElement("input");
+    name.className = "box-name mono";
+    name.value = nd.label;
+    name.spellcheck = false;
+    name.title = "the box's name on the canvas";
+    const commitName = () => {
+      const v = name.value.trim();
+      if (v && v !== nd.label && sim) {
+        sim.rename_node(nd.id, v);
+        redrawSoft();
+      }
+    };
+    name.addEventListener("change", commitName);
+    name.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).key === "Enter") name.blur();
+    });
+    inspectorEl.append(row("name", name));
+
+    inspectorEl.append(section("instances"));
+    if (nd.instanceIds.length === 0) inspectorEl.append(muted("empty — add one below"));
+    for (const id of nd.instanceIds) {
+      const i = inst(id);
+      if (!i) continue;
+      const r = div("conn-row");
+      const pick = document.createElement("button");
+      pick.className = `conn-name box-inst role-${i.role}`;
+      pick.textContent = `${i.name} · ${i.protocol} ${i.role}`;
+      pick.title = "select this instance";
+      pick.addEventListener("click", () => select(i.id));
+      r.append(pick);
+      inspectorEl.append(r);
+    }
+
+    const addSel = document.createElement("select");
+    addSel.className = "add-inst-sel";
+    addSel.append(opt("", "+ add instance to this box…", true));
+    for (const schema of shape.schemas) {
+      for (const p of schema.protocols) {
+        for (const role of ["server", "client"] as Role[]) {
+          addSel.append(opt(`${schema.namespace}|${p.name}|${role}`, `${p.name} · ${role}`));
+        }
+      }
+    }
+    addSel.addEventListener("change", () => {
+      const v = selValue(addSel);
+      if (!v) return;
+      const [schemaNs, protocol, role] = v.split("|");
+      sim!.add_instance(JSON.stringify({ schemaNs, protocol, role, nodeId: nd.id }));
+      redraw(); // stay on the box — you're building it up
+    });
+    inspectorEl.append(row("add", addSel));
+
+    inspectorEl.append(
+      button("remove box", "danger", () => {
+        const n = nd.instanceIds.length;
+        const msg =
+          n > 0
+            ? `Remove "${nd.label}" and its ${n} instance${n > 1 ? "s" : ""}?`
+            : `Remove "${nd.label}"?`;
+        if (typeof window.confirm === "function" && !window.confirm(msg)) return;
+        for (const id of [...nd.instanceIds]) sim!.remove_instance(id);
+        selectedNodeId = null;
+        redraw();
+      }),
+    );
   }
 
   function renderConnInspector(connId: string) {
@@ -1233,6 +1335,9 @@ export function createSim(opts: SimOpts = {}): SimView {
     if (selectedConnId && !model?.connections.some((c) => c.id === selectedConnId)) {
       selectedConnId = null;
     }
+    if (selectedNodeId && !model?.nodes.some((n) => n.id === selectedNodeId)) {
+      selectedNodeId = null;
+    }
     flog.setSources(logSources(), frameApi);
     flog.setClockBar(clockBar());
     renderCanvas();
@@ -1261,6 +1366,7 @@ export function createSim(opts: SimOpts = {}): SimView {
       }
       selectedId = null;
       selectedConnId = null;
+      selectedNodeId = null;
       renderPalette();
       redraw();
       // A restored link may carry `script` behaviours the lean wasm only stubs —
