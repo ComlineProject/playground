@@ -294,6 +294,41 @@ test("polish — the frame filter hides a kind and restores it", async () => {
   sim.destroy();
 });
 
+test("polish — `clear` drops the log and stays cleared until new frames arrive", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 1 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  pick(sim.el.querySelector(".call-fn") as HTMLSelectElement, "send");
+  const send = () =>
+    fire(
+      [...sim.el.querySelectorAll(".call-form .sim-btn")].find((b) => b.textContent === "send")!,
+      "click",
+    );
+
+  send();
+  await tick();
+  const rows = () => sim.el.querySelectorAll(".sim-frames-list .frame-row").length;
+  const afterFirst = rows();
+  assert.ok(afterFirst >= 4, "handshake + request + response are logged");
+
+  fire([...sim.el.querySelectorAll(".sim-frames-head .icon-btn")].find((b) => b.textContent === "clear")!, "click");
+  assert.equal(rows(), 0, "clear empties the list");
+
+  send();
+  await tick();
+  assert.equal(rows(), 2, "only the new request + response appear, not the whole history");
+  sim.destroy();
+});
+
 test("polish — round-trip time shows on the reply, blank on the request", async () => {
   const sim = createSim();
   document.body.append(sim.el);

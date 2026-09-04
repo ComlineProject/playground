@@ -325,14 +325,21 @@ export function frameLog(): FrameLog {
     list.append(r);
   }
 
-  function resetList() {
+  // `keepCursor`: wipe the rows on screen but leave `shownByConn` where it is,
+  // so the *next* poll only shows frames that arrive after this point. The
+  // `clear` button wants that; `setSources` (a fresh shape) wants a full reset.
+  function resetList(keepCursor = false) {
     sentAt.clear();
-    shownByConn.clear();
     lastAt = null;
     list.replaceChildren();
+    if (keepCursor) {
+      for (const s of sources) shownByConn.set(s.connId, api.frames(s.connId).length);
+    } else {
+      shownByConn.clear();
+    }
   }
 
-  clear.addEventListener("click", resetList);
+  clear.addEventListener("click", () => resetList(true));
 
   return {
     el,
