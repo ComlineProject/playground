@@ -141,8 +141,8 @@ const bridge: EditorBridge = {
     unwrap<CompileProjectResult>({ cmd: "compileProject", files: f }, { files: [] }),
   semanticTokens: (source) =>
     unwrap<SemanticTokens>({ cmd: "semanticTokens", source }, { data: [] }),
-  hover: (source, line, character) =>
-    unwrap<Hover | null>({ cmd: "hover", source, line, character }, null),
+  hover: (files, activePath, line, character) =>
+    unwrap<Hover | null>({ cmd: "hover", files, activePath, line, character }, null),
   completions: (source, line, character) =>
     unwrap<CompletionItem[]>({ cmd: "completions", source, line, character }, []),
 };

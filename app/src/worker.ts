@@ -80,7 +80,7 @@ type Req =
   | { id: number; cmd: "generateProject"; files: FileInput[]; target: string; mode: string }
   | { id: number; cmd: "describeProject"; files: FileInput[] }
   | { id: number; cmd: "semanticTokens"; source: string }
-  | { id: number; cmd: "hover"; source: string; line: number; character: number }
+  | { id: number; cmd: "hover"; files: FileInput[]; activePath: string; line: number; character: number }
   | { id: number; cmd: "completions"; source: string; line: number; character: number };
 
 const ready = init();
@@ -104,7 +104,7 @@ self.onmessage = async (e: MessageEvent<Req>) => {
         result = semantic_tokens(req.source);
         break;
       case "hover":
-        result = hover(req.source, req.line, req.character);
+        result = hover(req.files, req.activePath, req.line, req.character);
         break;
       case "completions":
         result = completions(req.source, req.line, req.character);
