@@ -57,6 +57,13 @@ fn uri() -> Url {
     Url::parse("file:///playground.ids").expect("static uri")
 }
 
+/// A virtual file's own URI, for multi-file hover — the exact form doesn't
+/// matter (hover never surfaces it back to the caller), it only needs to be
+/// distinct per file.
+fn file_uri(path: &str) -> Url {
+    Url::parse(&format!("file:///{path}")).unwrap_or_else(|_| uri())
+}
+
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
@@ -593,12 +600,30 @@ pub fn semantic_tokens(source: &str) -> JsValue {
     to_js(&semantic_tokens::get_semantic_tokens(source, &uri()))
 }
 
+/// Hover for the active file, also resolving a struct/enum/protocol/const
+/// declared in one of the *other* project files (e.g. via `use other::Thing`)
+/// — a flat, first-match name lookup across `files`, not full `use`-scoped
+/// resolution (same simplification `describe_project`'s `known` set below
+/// already uses for cross-file type references).
 #[wasm_bindgen]
-pub fn hover(source: &str, line: u32, character: u32) -> JsValue {
-    to_js(&hover_h::get_hover_info(
-        source,
-        &uri(),
+pub fn hover(files: JsValue, active_path: &str, line: u32, character: u32) -> JsValue {
+    let files: Vec<FileInput> = match serde_wasm_bindgen::from_value(files) {
+        Ok(f) => f,
+        Err(_) => return to_js(&None::<lsp_types::Hover>),
+    };
+    let Some(active) = files.iter().find(|f| f.path == active_path) else {
+        return to_js(&None::<lsp_types::Hover>);
+    };
+    let other_files: Vec<(Url, String)> = files
+        .iter()
+        .filter(|f| f.path != active_path)
+        .map(|f| (file_uri(&f.path), f.source.clone()))
+        .collect();
+    to_js(&hover_h::get_hover_info_with_project(
+        &active.source,
+        &file_uri(&active.path),
         Position { line, character },
+        &other_files,
     ))
 }
 

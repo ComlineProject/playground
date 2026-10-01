@@ -54,7 +54,7 @@ import type {
 export interface EditorBridge {
   compileProject(files: FileInput[]): Promise<CompileProjectResult>;
   semanticTokens(src: string): Promise<SemanticTokens>;
-  hover(src: string, line: number, character: number): Promise<Hover | null>;
+  hover(files: FileInput[], activePath: string, line: number, character: number): Promise<Hover | null>;
   completions(src: string, line: number, character: number): Promise<CompletionItem[]>;
 }
 
@@ -213,7 +213,7 @@ function renderHover(contents: unknown): string {
   return parts.join("\n\n").replace(/^\*(.+)\*$/gm, "$1");
 }
 
-function hoverInfo(bridge: EditorBridge) {
+function hoverInfo(ctx: EditorContext) {
   return hoverTooltip(async (view, pos) => {
     // Anchor the tooltip to the whole word so it stays put while the pointer
     // moves *within* the symbol — otherwise CM re-queries on every move and
@@ -221,7 +221,7 @@ function hoverInfo(bridge: EditorBridge) {
     const word = view.state.wordAt(pos);
     if (!word) return null;
     const l = view.state.doc.lineAt(pos);
-    const h = await bridge.hover(view.state.doc.toString(), l.number - 1, pos - l.from);
+    const h = await ctx.bridge.hover(ctx.project(), ctx.activeName(), l.number - 1, pos - l.from);
     if (!h) return null;
     const text = renderHover(h.contents);
     if (!text) return null;
@@ -324,7 +324,7 @@ export function makeState(doc: string, ctx: EditorContext): EditorState {
       semanticHighlight(ctx.bridge),
       diagnostics(ctx),
       autocompletion({ override: [comlineCompletions(ctx.bridge)] }),
-      hoverInfo(ctx.bridge),
+      hoverInfo(ctx),
       keymap.of([
         indentWithTab,
         ...defaultKeymap,
