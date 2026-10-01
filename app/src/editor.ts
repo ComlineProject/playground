@@ -202,15 +202,78 @@ function cmCompletionType(kind?: number): string {
 }
 
 // ── hover ─────────────────────────────────────────────────────────────────
-function renderHover(contents: unknown): string {
-  const parts: string[] = [];
-  const push = (c: unknown) => {
-    if (typeof c === "string") parts.push(c);
-    else if (c && typeof c === "object" && "value" in c) parts.push(String((c as { value: unknown }).value));
+// `Hover.contents` is an array of logical blocks: one `{language, value}`
+// code block (the signature, syntax-colored below) plus plain-string prose
+// blocks (a docstring, and/or a `*N fields*`-style detail caption). Each
+// renders as its own element so CSS can divide them (`.cm-hover > * + *`).
+
+// Line-start byte offsets for a plain string, standing in for what
+// `EditorState["doc"].line()` gives `decodeTokens` for a live document —
+// the signature text here is never part of one.
+function lineStarts(text: string): number[] {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) if (text[i] === "\n") starts.push(i + 1);
+  return starts;
+}
+
+// Same delta-token decoding as `decodeTokens`, against a plain string's own
+// line starts instead of a CodeMirror document, building colored `<span>`s
+// (the exact `cm-tok-*` classes `theme` already defines) instead of
+// `Decoration`s.
+function highlightSignature(text: string, data: number[]): DocumentFragment {
+  const starts = lineStarts(text);
+  const frag = document.createDocumentFragment();
+  let pos = 0;
+  let line = 0;
+  let ch = 0;
+  const flushTextTo = (to: number) => {
+    if (to > pos) frag.appendChild(document.createTextNode(text.slice(pos, to)));
   };
-  if (Array.isArray(contents)) contents.forEach(push);
-  else push(contents);
-  return parts.join("\n\n").replace(/^\*(.+)\*$/gm, "$1");
+  for (let i = 0; i + 4 < data.length; i += 5) {
+    const [dLine, dStart, len, type] = data.slice(i, i + 5);
+    line += dLine;
+    ch = dLine === 0 ? ch + dStart : dStart;
+    const cls = TOKEN_CLASS[type];
+    const from = (starts[line] ?? text.length) + ch;
+    const to = Math.min(from + len, text.length);
+    if (!cls || to <= from || from < pos) continue;
+    flushTextTo(from);
+    const span = document.createElement("span");
+    span.className = `cm-${cls}`;
+    span.textContent = text.slice(from, to);
+    frag.appendChild(span);
+    pos = to;
+  }
+  flushTextTo(text.length);
+  return frag;
+}
+
+const DETAIL_RE = /^\*(.+)\*$/s;
+
+async function renderHoverBlocks(contents: unknown, bridge: EditorBridge): Promise<HTMLElement[]> {
+  const items = Array.isArray(contents) ? contents : [contents];
+  const blocks: HTMLElement[] = [];
+  for (const c of items) {
+    if (c && typeof c === "object" && "value" in c) {
+      const value = String((c as { value: unknown }).value);
+      const pre = document.createElement("pre");
+      pre.className = "cm-hover-code";
+      try {
+        const tokens = await bridge.semanticTokens(value);
+        pre.appendChild(highlightSignature(value, tokens.data));
+      } catch {
+        pre.textContent = value; // highlighting is a nicety — fall back to plain text
+      }
+      blocks.push(pre);
+    } else if (typeof c === "string" && c) {
+      const div = document.createElement("div");
+      const detail = c.match(DETAIL_RE);
+      div.className = detail ? "cm-hover-detail" : "cm-hover-prose";
+      div.textContent = detail ? detail[1] : c;
+      blocks.push(div);
+    }
+  }
+  return blocks;
 }
 
 function hoverInfo(ctx: EditorContext) {
@@ -223,8 +286,8 @@ function hoverInfo(ctx: EditorContext) {
     const l = view.state.doc.lineAt(pos);
     const h = await ctx.bridge.hover(ctx.project(), ctx.activeName(), l.number - 1, pos - l.from);
     if (!h) return null;
-    const text = renderHover(h.contents);
-    if (!text) return null;
+    const blocks = await renderHoverBlocks(h.contents, ctx.bridge);
+    if (blocks.length === 0) return null;
     return {
       pos: word.from,
       end: word.to,
@@ -232,7 +295,7 @@ function hoverInfo(ctx: EditorContext) {
       create: () => {
         const dom = document.createElement("div");
         dom.className = "cm-hover";
-        dom.textContent = text;
+        for (const block of blocks) dom.appendChild(block);
         return { dom };
       },
     };
@@ -257,7 +320,24 @@ const theme = EditorView.theme(
       border: "1px solid var(--border)",
       color: "var(--fg)",
     },
-    ".cm-hover": { padding: "0.4rem 0.6rem", whiteSpace: "pre-wrap", maxWidth: "40rem" },
+    ".cm-hover": { padding: "0.4rem 0.6rem", maxWidth: "40rem" },
+    ".cm-hover > * + *": {
+      marginTop: "0.5rem",
+      paddingTop: "0.5rem",
+      borderTop: "1px solid var(--border)",
+    },
+    ".cm-hover-code": {
+      margin: 0,
+      whiteSpace: "pre-wrap",
+      fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, monospace',
+    },
+    ".cm-hover-prose": { whiteSpace: "pre-wrap" },
+    ".cm-hover-detail": {
+      whiteSpace: "pre-wrap",
+      color: "var(--muted)",
+      fontStyle: "italic",
+      fontSize: "0.85em",
+    },
     ".cm-tok-kw": { color: "#bb9af7" },
     ".cm-tok-type": { color: "#7dcfff" },
     ".cm-tok-str": { color: "#9ece6a" },
