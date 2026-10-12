@@ -12,13 +12,13 @@ crate-type = ["cdylib", "rlib"]
 # The same crates the CLI and the language server compose — by git rev, so the
 # playground runs *that* code, not a re-implementation. Keep the `comline-core`
 # rev identical across all of them (one `comline-core` in the tree).
-comline-core = { git = "https://github.com/ComlineProject/core", rev = "021fdfcc3e0de8ac2864a838a630048e21038aa3" }
-comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "7baf2fb7c67d448093d7dd34b0a41d0c1de2c864" }
-comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "2b506fc98112ac7f41d8ce6a4d9745bbdc247821" }
-comline-codegen-typescript = { git = "https://github.com/ComlineProject/comline-typescript", rev = "26b9c714b9e3df57fc939b7b0627939b407fee37" }
+comline-core = { git = "https://github.com/ComlineProject/core", rev = "5c1f3474b462ed912f4f2f5a518b87a5f6576aaa" }
+comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "52803df6436f49aec5f2266a94c89d4ced4b229c" }
+comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "eb8396a337e0efe452cea32cdb0e6a50dd56f2d5" }
+comline-codegen-typescript = { git = "https://github.com/ComlineProject/comline-typescript", rev = "d8a1df17b83752314a34d9c0b7817e4feb16820e" }
 # The LSP's analysis layer (diagnostics / hover / completion / semantic tokens),
 # without its `tower-lsp` server — builds for wasm32.
-comline-language-server = { git = "https://github.com/ComlineProject/language-server", rev = "69864f8f762f01201736e6ca7e2d474e53cded50", default-features = false }
+comline-language-server = { git = "https://github.com/ComlineProject/language-server", rev = "a4826411cc655928de3db9d1bb80304c2f834f1c", default-features = false }
 lsp-types = "0.94"
 rust-sitter = "0.4.5" # parse-error types
 
