@@ -26,13 +26,14 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use comline_core::package::config::ir::interpreter::ProjectInterpreter;
+use comline_core::schema::idl::annotations::canonical_value;
 use comline_core::schema::idl::grammar::Declaration;
 use comline_core::schema::ir::compiler::interpreted::kind_search::{KindValue, Primitive};
 use comline_core::schema::ir::compiler::interpreter::incremental::IncrementalInterpreter;
 use comline_core::schema::ir::context::SchemaContext;
 use comline_core::schema::ir::frozen::schema_ir_hash;
 use comline_core::schema::ir::frozen::unit::FrozenUnit;
-use comline_core::schema::ir::validation::{self, ValidationError};
+use comline_core::schema::ir::validation;
 use comline_core::utils::codemap::CodeMap;
 
 use comline_codegen::{GenRequest, Mode, PackageMeta};
@@ -161,6 +162,9 @@ pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
     let req = GenRequest {
         mode,
         schemas: &schemas,
+        // No dependency bindings to reference in the browser - std is
+        // generated inline, as it was before the flag existed.
+        external_std: false,
         package: PackageMeta {
             name: "playground".to_string(),
             version: "0.1.0".to_string(),
@@ -256,18 +260,24 @@ fn interpret_project(
         // Match `comline build`: a leading `Namespace` unit before validation.
         units.insert(0, FrozenUnit::Namespace(namespace.clone()));
 
-        let diagnostics = match validation::validate(&units) {
-            Ok(()) => Vec::new(),
-            Err(errors) => errors
-                .into_iter()
-                .map(|e| validation_diagnostic(&f.source, e))
-                .collect(),
+        // `validate` reports warnings through its `Ok` arm now - a
+        // deprecation, say. Showing those too matches what `comline build`
+        // prints; only the `Err` arm means the schema would fail to build.
+        let (diagnostics, ok) = match validation::validate(&units) {
+            Ok(warnings) => (
+                warnings.into_iter().map(|w| validation_diagnostic(&f.source, w)).collect(),
+                true,
+            ),
+            Err(errors) => (
+                errors.into_iter().map(|e| validation_diagnostic(&f.source, e)).collect(),
+                false,
+            ),
         };
 
         reports.push(FileReport {
             path: f.path.clone(),
             namespace,
-            ok: diagnostics.is_empty(),
+            ok,
             diagnostics,
             ir: Some(format!("{units:#?}")),
             units: units.len(),
@@ -294,19 +304,34 @@ fn namespace_segments(path: &str) -> Vec<String> {
     }
 }
 
-fn validation_diagnostic(source: &str, error: ValidationError) -> Diagnostic {
+/// One of core's diagnostics as an LSP one. `ValidationError` was folded
+/// into the shared `Diagnostic` type, which carries its own severity and a
+/// `help` line - so a warning is no longer forced to render as an error,
+/// and a "did you mean" suggestion is no longer dropped.
+fn validation_diagnostic(source: &str, error: comline_core::diagnostics::Diagnostic) -> Diagnostic {
+    use comline_core::diagnostics::Severity;
+
     let range = error
         .span
         .map(|(start, end)| byte_range_to_lsp_range(source, start, end))
         .unwrap_or_default();
-    let message = if error.context.is_empty() {
+    let severity = error.effective_severity();
+    let mut message = if error.context.is_empty() {
         error.message
     } else {
         format!("{} — {}", error.message, error.context)
     };
+    if let Some(help) = error.help {
+        message = format!("{message} — {help}");
+    }
     Diagnostic {
         range,
-        severity: Some(DiagnosticSeverity::ERROR),
+        severity: Some(match severity {
+            Severity::Error => DiagnosticSeverity::ERROR,
+            Severity::Warning => DiagnosticSeverity::WARNING,
+            Severity::Info => DiagnosticSeverity::INFORMATION,
+            Severity::Hint => DiagnosticSeverity::HINT,
+        }),
         source: Some("comline".to_string()),
         message,
         ..Default::default()
@@ -496,14 +521,22 @@ fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -
     }
 }
 
+/// The framing a protocol is generated with, by name.
+///
+/// The accepted spellings come from core rather than a copy kept here.
+/// This copy had drifted: it was missing `json-rpc` and
+/// `comline.datagram`, so a protocol both real generators emit as
+/// JSON-RPC was rendered as datagram in the playground - the one place a
+/// reader would compare them side by side.
 fn framing_of(params: &[FrozenUnit]) -> String {
     for p in params {
-        if let FrozenUnit::Property { name, expression } = p {
+        if let FrozenUnit::Property { name, value } = p {
             if name == "framing" {
-                return match expression.as_deref() {
-                    Some("jsonrpc") | Some("jsonrpc-2.0") => "jsonrpc".to_string(),
-                    _ => "datagram".to_string(),
-                };
+                return value
+                    .as_text()
+                    .and_then(|written| canonical_value("framing", &written))
+                    .unwrap_or("datagram")
+                    .to_string();
             }
         }
     }
@@ -638,4 +671,37 @@ pub fn completions(source: &str, line: u32, character: u32) -> JsValue {
 
 fn to_js<T: Serialize>(value: &T) -> JsValue {
     serde_wasm_bindgen::to_value(value).unwrap_or(JsValue::NULL)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use comline_core::schema::ir::frozen::unit::ConfigValue;
+
+    fn framing_param(written: &str) -> Vec<FrozenUnit> {
+        vec![FrozenUnit::Property {
+            name: "framing".to_string(),
+            value: ConfigValue::Str(written.to_string()),
+        }]
+    }
+
+    #[test]
+    fn every_framing_spelling_core_accepts_resolves_here_too() {
+        // The bug this replaced: `json-rpc` and `comline.datagram` were
+        // missing from the local table, so a protocol the real generators
+        // emit as JSON-RPC rendered as datagram in the playground - the
+        // one place the two are compared side by side.
+        for spelling in ["jsonrpc", "json-rpc", "jsonrpc-2.0"] {
+            assert_eq!(framing_of(&framing_param(spelling)), "jsonrpc", "{spelling}");
+        }
+        for spelling in ["datagram", "comline.datagram"] {
+            assert_eq!(framing_of(&framing_param(spelling)), "datagram", "{spelling}");
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_framing_falls_back_to_datagram() {
+        assert_eq!(framing_of(&framing_param("nonsense")), "datagram");
+        assert_eq!(framing_of(&[]), "datagram");
+    }
 }
