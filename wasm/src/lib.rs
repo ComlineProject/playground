@@ -169,6 +169,13 @@ pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
             name: "playground".to_string(),
             version: "0.1.0".to_string(),
         },
+        // Whichever generator `target` is about to select, named by the
+        // generator itself rather than restated here.
+        lang_version: match target {
+            "typescript" | "ts" => comline_codegen_typescript::LANG_VERSION,
+            _ => comline_codegen_rust::LANG_VERSION,
+        }
+        .to_string(),
         default_framing: None,
     };
 
