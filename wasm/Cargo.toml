@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 # rev identical across all of them (one `comline-core` in the tree).
 comline-core = { git = "https://github.com/ComlineProject/core", rev = "86e4c4e37ca8e46de79c10b72afe9492c85f75d0" }
 comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "5a76de9011bb7f4f6ded0d507e95c5844bc0c63f" }
-comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "af39087ba52b49ae99af3ce7faaaf4e79818b963" }
+comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "87cb367c0b513615403b92521ecf5e831ae66ef0" }
 comline-codegen-typescript = { git = "https://github.com/ComlineProject/comline-typescript", rev = "5f104255d67dc0152ad2a17921603529733f8e57" }
 # The LSP's analysis layer (diagnostics / hover / completion / semantic tokens),
 # without its `tower-lsp` server — builds for wasm32.
