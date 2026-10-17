@@ -198,6 +198,66 @@ test("1d — flipping the server to Raise error surfaces the mapped error", asyn
   sim.destroy();
 });
 
+test("fault — a provider fault reads as one in the call and the frame log", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+
+  fire(server, "click");
+  pick(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement, "fault");
+  // nothing to configure — a hint stands where the JSON box would be
+  const sendRow = [...sim.el.querySelectorAll(".behavior-row")].find(
+    (r) => r.querySelector(".behavior-fn")!.textContent === "send",
+  )!;
+  assert.equal(sendRow.querySelector(".behavior-config"), null);
+  assert.match(sendRow.querySelector(".behavior-hint")!.textContent!, /provider fault/);
+
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+
+  const out = fireSend(sim.el, "send");
+  await tick();
+  // Not "undecodable", which is what an unhandled status used to fall into.
+  assert.equal(out.textContent, "provider fault");
+  assert.ok(out.classList.contains("err"));
+
+  const frames = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
+  const reply = frames.find((r) => r.querySelector(".frame-fn")?.textContent === "fault");
+  assert.ok(reply, "the reply frame is labelled a fault, not left blank");
+  assert.ok(reply.classList.contains("frame-fault-reply"));
+  // the `fault` behaviour gives no reason, and the inspector says so
+  assert.match(reply.querySelector(".frame-body")!.textContent!, /no reason recorded/);
+  sim.destroy();
+});
+
+test("fault — the reason a provider faulted is on its reply frame", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+
+  // A forward with no connection picked used to answer `ordinal: 0`, which
+  // this schema would have shown as `Rejected`. Now it faults, with the reason.
+  fire(server, "click");
+  pick(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement, "forward");
+
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+
+  const out = fireSend(sim.el, "send");
+  await tick();
+  assert.equal(out.textContent, "provider fault");
+  assert.doesNotMatch(out.textContent!, /Rejected/);
+
+  const frames = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
+  const reply = frames.find((r) => r.querySelector(".frame-fn")?.textContent === "fault")!;
+  assert.match(reply.querySelector(".frame-body")!.textContent!, /forward: pick a connection/);
+  sim.destroy();
+});
+
 // ── canvas polish ─────────────────────────────────────────────────────
 
 function place(sim: { el: HTMLElement }) {

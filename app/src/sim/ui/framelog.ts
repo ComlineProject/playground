@@ -21,7 +21,10 @@ export interface Frame {
   bytes: number[];
   at: number;
   kind: "handshake" | "request" | "response";
+  /** What the wire's fault injection did to this frame (`dropped`, …). */
   fault?: string | null;
+  /** Why the provider faulted, on a fault response. Never on the wire. */
+  note?: string | null;
 }
 
 /** `Sim.describe_frame` output. */
@@ -33,6 +36,10 @@ export interface FrameDetail {
   params?: unknown;
   ok?: unknown;
   err?: { ordinal: number; body: unknown };
+  /** The provider faulted: a failure no declared error covers. */
+  fault?: boolean;
+  /** Why it faulted, when the simulator knows. */
+  note?: string;
   handshake?: { irHash: string; wireFormat: string; framing: string; caps: number };
 }
 
@@ -272,7 +279,7 @@ export function frameLog(): FrameLog {
     const row = document.createElement("tbody");
     row.className = `frame-row frame-${detail.kind}${f.fault ? " frame-faulted" : ""}${
       dropped ? " frame-dropped" : ""
-    }`;
+    }${detail.fault ? " frame-fault-reply" : ""}`;
     row.dataset.kind = detail.kind;
     row.dataset.conn = connId;
     row.hidden = hidden.has(detail.kind) || hiddenConns.has(connId);
@@ -289,7 +296,10 @@ export function frameLog(): FrameLog {
       td("frame-seq", String(f.seq).padStart(3, "0")),
       td("frame-dir", `${f.from} → ${f.to}`),
       td("frame-kind", kindText),
-      td("frame-fn", detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : "")),
+      td(
+        "frame-fn",
+        detail.fn ?? (detail.err ? `err ${detail.err.ordinal}` : detail.fault ? "fault" : ""),
+      ),
       rtt,
       td("frame-len", `${f.bytes.length} B`),
     ];
@@ -332,6 +342,9 @@ export function frameLog(): FrameLog {
     if ("params" in detail) body.append(json("params", detail.params));
     if ("ok" in detail) body.append(json("ok", detail.ok));
     if (detail.err) body.append(json(`err · ordinal ${detail.err.ordinal}`, detail.err.body));
+    // A fault carries no reason on the wire; the note is the simulator's own
+    // record of why, the way a real provider would only have logged it.
+    if (detail.fault) body.append(kv("fault", detail.note ?? "no reason recorded"));
 
     // raw bytes — as hex, or decoded as text (non-printables → ·)
     const rawBtns = document.createElement("div");
