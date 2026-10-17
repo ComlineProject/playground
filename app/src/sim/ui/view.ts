@@ -742,6 +742,12 @@ export function createSim(opts: SimOpts = {}): SimView {
         p.out.textContent = "timeout";
         p.out.classList.add("err");
         wireChanged = true;
+      } else if (r.status === "fault") {
+        // All the caller learns: the provider failed, and no declared error
+        // covers it. Why is on the reply frame, not the wire.
+        p.out.textContent = "provider fault";
+        p.out.title = "the provider failed with no declared error — expand the reply frame for why";
+        p.out.classList.add("err");
       } else {
         p.out.textContent = r.message ?? "undecodable";
         p.out.classList.add("err");
@@ -1251,6 +1257,16 @@ export function createSim(opts: SimOpts = {}): SimView {
         cfgHost.append(scriptConfig(i, fnName));
         return;
       }
+      if (setting().kind === "fault") {
+        // Nothing to configure: a fault has no ordinal and no body.
+        cfgHost.append(
+          muted(
+            "Fails every call with no declared error. The caller sees a provider fault, not one of this function's errors.",
+            "behavior-hint",
+          ),
+        );
+        return;
+      }
       const cfg = document.createElement("textarea");
       cfg.className = "behavior-config mono";
       cfg.rows = 3;
@@ -1623,6 +1639,7 @@ function renderCompare(host: HTMLElement, combos: Record<string, CompareEntry>):
     }
     if (r.status === "err") return `err ${r.ordinal} · ${JSON.stringify(r.body)}`;
     if (r.status === "timeout") return "timeout";
+    if (r.status === "fault") return "provider fault";
     return r.message ?? r.status;
   };
   const canon = entries.map(([, v]) => JSON.stringify(v.result));

@@ -1174,6 +1174,9 @@ tbody.frame-row > tr.frame-detail > td {
 .frame-dropped {
   opacity: 0.45;
 }
+.frame-fault-reply .frame-fn {
+  color: var(--err);
+}
 .frame-dropped .frame-kind {
   color: var(--err);
   text-decoration: line-through;
