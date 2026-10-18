@@ -28,7 +28,7 @@ use wasm_bindgen::prelude::*;
 use comline_core::package::config::ir::interpreter::ProjectInterpreter;
 use comline_core::schema::idl::annotations::canonical_value;
 use comline_core::schema::idl::grammar::Declaration;
-use comline_core::schema::ir::compiler::interpreted::kind_search::{KindValue, Primitive};
+use comline_core::schema::ir::frozen::types::TypeRef as FrozenType;
 use comline_core::schema::ir::compiler::interpreter::incremental::IncrementalInterpreter;
 use comline_core::schema::ir::context::SchemaContext;
 use comline_core::schema::ir::frozen::schema_ir_hash;
@@ -433,15 +433,19 @@ enum TypeDef {
     Enum { name: String, variants: Vec<String> },
 }
 
-/// A type reference in a signature. Frozen function args / returns / fields are
-/// almost always `KindValue::Namespaced(<string>, None)`; this classifies that
-/// string (`u64`, `Message`, `Message[]`, …) into a shape the UI can render.
+/// A type reference in a signature: core's frozen `TypeRef`, with each named
+/// type classified as declared in this project (`ref`) or not (`prim`).
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum TypeRef {
     Prim { name: String },
     Ref { name: String },
-    Array { of: Box<TypeRef> },
+    /// `len` is a fixed array's length (`u8[4]`); absent for `T[]`.
+    Array {
+        of: Box<TypeRef>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        len: Option<u64>,
+    },
     Unit,
     Union { of: Vec<TypeRef> },
 }
@@ -552,9 +556,9 @@ fn framing_of(params: &[FrozenUnit]) -> String {
 
 fn field_shape(u: &FrozenUnit, known: &HashSet<&str>) -> Option<FieldShape> {
     match u {
-        FrozenUnit::Field { name, kind_value, optional, .. } => Some(FieldShape {
+        FrozenUnit::Field { name, ty, optional, .. } => Some(FieldShape {
             name: name.clone(),
-            ty: type_ref(kind_value, known),
+            ty: type_ref(ty, known),
             optional: *optional,
         }),
         _ => None,
@@ -563,11 +567,7 @@ fn field_shape(u: &FrozenUnit, known: &HashSet<&str>) -> Option<FieldShape> {
 
 fn enum_variant_name(u: &FrozenUnit) -> Option<String> {
     match u {
-        FrozenUnit::EnumVariant(kv, _) => Some(match kv {
-            KindValue::EnumVariant(n, _) | KindValue::Namespaced(n, _) => n.clone(),
-            KindValue::Primitive(p) => prim_name(p),
-            _ => "?".to_string(),
-        }),
+        FrozenUnit::EnumVariant(name, _) => Some(name.clone()),
         _ => None,
     }
 }
@@ -580,7 +580,7 @@ fn fn_shape(index: u32, u: &FrozenUnit, errors: &[ErrorShape], known: &HashSet<&
             oneway: _return.is_none(),
             args: arguments
                 .iter()
-                .map(|a| ArgShape { name: a.name.clone(), ty: type_ref(&a.kind, known) })
+                .map(|a| ArgShape { name: a.name.clone(), ty: type_ref(&a.ty, known) })
                 .collect(),
             returns: _return.as_ref().map(|k| type_ref(k, known)),
             throws: throws
@@ -599,37 +599,24 @@ fn fn_shape(index: u32, u: &FrozenUnit, errors: &[ErrorShape], known: &HashSet<&
     }
 }
 
-fn type_ref(kind: &KindValue, known: &HashSet<&str>) -> TypeRef {
-    match kind {
-        KindValue::Unit => TypeRef::Unit,
-        KindValue::Union(members) => TypeRef::Union {
+/// The only distinction the UI needs beyond core's own shape is "a type
+/// declared in this project" (render its fields) vs. "anything else" (one
+/// scalar input). The grammar reserves the primitive keywords, so a declared
+/// name never collides with `u64` / `string` / …, and `known` (built from the
+/// IR) decides.
+fn type_ref(ty: &FrozenType, known: &HashSet<&str>) -> TypeRef {
+    match ty {
+        FrozenType::Unit => TypeRef::Unit,
+        FrozenType::Union(members) => TypeRef::Union {
             of: members.iter().map(|m| type_ref(m, known)).collect(),
         },
-        KindValue::Primitive(p) => TypeRef::Prim { name: prim_name(p) },
-        KindValue::EnumVariant(n, _) | KindValue::Namespaced(n, _) => name_ref(n, known),
-    }
-}
-
-/// A frozen signature type is a plain string: `u64`, `Message`, `Message[]`.
-/// The only distinction the UI needs is "a type declared in this project"
-/// (render its fields) vs. "anything else" (one scalar input) — and the
-/// grammar reserves the primitive keywords, so a declared name can never
-/// collide with `u64` / `string` / …. That makes `known` (built from the IR)
-/// the single source of truth; there is no primitive-name list to keep in
-/// sync with `comline-core`.
-fn name_ref(n: &str, known: &HashSet<&str>) -> TypeRef {
-    match n.strip_suffix("[]") {
-        Some(elem) => TypeRef::Array { of: Box::new(name_ref(elem, known)) },
-        None if known.contains(n) => TypeRef::Ref { name: n.to_string() },
-        None => TypeRef::Prim { name: n.to_string() },
-    }
-}
-
-fn prim_name(p: &Primitive) -> String {
-    // strum's `Name` prop is empty for `String` / `Namespaced`.
-    match p.name() {
-        "" => "string".to_string(),
-        n => n.to_string(),
+        FrozenType::Primitive(p) => TypeRef::Prim { name: p.name().to_string() },
+        FrozenType::Array { element, length } => TypeRef::Array {
+            of: Box::new(type_ref(element, known)),
+            len: *length,
+        },
+        FrozenType::Named(n) if known.contains(n.as_str()) => TypeRef::Ref { name: n.clone() },
+        FrozenType::Named(n) => TypeRef::Prim { name: n.clone() },
     }
 }
 
