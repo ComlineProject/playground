@@ -65,7 +65,8 @@ export type TypeDef =
 export type TypeRef =
   | { kind: "prim"; name: string }
   | { kind: "ref"; name: string }
-  | { kind: "array"; of: TypeRef }
+  /** `len` is a fixed array's length (`u8[4]`); absent for `T[]`. */
+  | { kind: "array"; of: TypeRef; len?: number }
   | { kind: "unit" }
   | { kind: "union"; of: TypeRef[] };
 
@@ -82,7 +83,7 @@ export function findProtocol(
   return schema && protocol ? { schema, protocol } : undefined;
 }
 
-/** A short label for a `TypeRef` (`u64`, `Message[]`, `A | B`, `()`). */
+/** A short label for a `TypeRef` (`u64`, `Message[]`, `u8[4]`, `A | B`, `()`). */
 export function typeLabel(ty: TypeRef): string {
   switch (ty.kind) {
     case "unit":
@@ -91,7 +92,7 @@ export function typeLabel(ty: TypeRef): string {
     case "ref":
       return ty.name;
     case "array":
-      return `${typeLabel(ty.of)}[]`;
+      return `${typeLabel(ty.of)}[${ty.len ?? ""}]`;
     case "union":
       return ty.of.map(typeLabel).join(" | ");
   }
@@ -104,7 +105,7 @@ export function zeroValue(ty: TypeRef, types: TypeDef[], seen: string[] = []): u
     case "unit":
       return null;
     case "array":
-      return [];
+      return Array.from({ length: ty.len ?? 0 }, () => zeroValue(ty.of, types, seen));
     case "union":
       return ty.of.length ? zeroValue(ty.of[0], types, seen) : null;
     case "prim":

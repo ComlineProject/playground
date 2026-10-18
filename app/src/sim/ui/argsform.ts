@@ -5,7 +5,7 @@
 /// escape hatch.
 
 import type { ArgShape, FieldShape, SchemaShape, TypeRef } from "../shape.ts";
-import { typeLabel } from "../shape.ts";
+import { typeLabel, zeroValue } from "../shape.ts";
 
 export interface ArgsForm {
   el: HTMLElement;
@@ -168,7 +168,7 @@ function jsonInput(ty: TypeRef, initial: unknown): { el: HTMLElement; read(): un
   ta.className = "arg-input mono";
   ta.rows = 2;
   ta.spellcheck = false;
-  ta.value = initial === undefined ? (ty.kind === "array" ? "[]" : "null") : JSON.stringify(initial);
+  ta.value = JSON.stringify(initial === undefined ? (ty.kind === "array" ? zeroValue(ty, []) : null) : initial);
   return { el: ta, read: () => parseJson(ta.value, typeLabel(ty)) };
 }
 
