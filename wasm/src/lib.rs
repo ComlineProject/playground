@@ -165,6 +165,9 @@ pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
         // No dependency bindings to reference in the browser - std is
         // generated inline, as it was before the flag existed.
         external_std: false,
+        // The preview shows the checks; whether decoding runs them is a
+        // consumer's `comline.toml` choice the playground has no file for.
+        validate_on_decode: Default::default(),
         package: PackageMeta {
             name: "playground".to_string(),
             version: "0.1.0".to_string(),
