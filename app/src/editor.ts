@@ -69,7 +69,8 @@ export interface EditorContext {
 }
 
 // legend order — matches `comline-language-server`'s semantic_tokens
-const TOKEN_CLASS = ["tok-kw", "tok-type", "tok-str", "tok-comment", "tok-num", "tok-ann"];
+// (`namespace` stays uncoloured; `variable` is an f-string's `{placeholder}`)
+const TOKEN_CLASS = ["tok-kw", "tok-type", "tok-str", "tok-comment", "tok-num", "tok-ann", "", "tok-var"];
 
 function posOf(doc: EditorState["doc"], p: LspPosition): number {
   const line = doc.line(Math.min(p.line + 1, doc.lines));
@@ -344,6 +345,7 @@ const theme = EditorView.theme(
     ".cm-tok-comment": { color: "#565f89", fontStyle: "italic" },
     ".cm-tok-ann": { color: "#e0af68" },
     ".cm-tok-num": { color: "#ff9e64" },
+    ".cm-tok-var": { color: "#73daca" },
   },
   { dark: true },
 );
