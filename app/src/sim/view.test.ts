@@ -122,7 +122,7 @@ test("1d — place, connect, call, and see the reply and frames", async () => {
   (reqRow as HTMLDetailsElement).open = true;
   fire(reqRow, "toggle");
   assert.match(reqRow.querySelector(".frame-body")!.textContent!, /"text": "hello"/);
-  assert.match(reqRow.querySelector(".frame-body")!.textContent!, /comline\.datagram/);
+  assert.match(reqRow.querySelector(".frame-body")!.textContent!, /datagram@1/);
 
   sim.destroy();
 });
