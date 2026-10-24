@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use comline_core::package::config::ir::interpreter::ProjectInterpreter;
-use comline_core::schema::idl::annotations::FramingValue;
+use comline_core::schema::idl::annotations::{FramingValue, DEFAULT_FORMAT, DEFAULT_FRAMING};
 use comline_core::schema::idl::grammar::Declaration;
 use comline_core::schema::ir::frozen::types::TypeRef as FrozenType;
 use comline_core::schema::ir::compiler::interpreter::incremental::IncrementalInterpreter;
@@ -182,7 +182,8 @@ pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
             _ => comline_codegen_rust::LANG_VERSION,
         }
         .to_string(),
-        default_framing: None,
+        // The playground's congregation declares no `wire`: the default.
+        wire_format: DEFAULT_FORMAT.to_string(),
     };
 
     let generated = match target {
@@ -548,8 +549,12 @@ fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -
 ///
 /// Read through core's `FramingValue`, so `"jsonrpc"` and
 /// `{ name = "jsonrpc", ... }` are the same framing here as everywhere.
+///
+/// A protocol that names none gets the package's framing, which core has
+/// already written into it when the package declares one, else the
+/// built-in default, `datagram@2`.
 fn framing_of(params: &[FrozenUnit]) -> String {
-    FramingValue::of_protocol(params).map_or("datagram", |f| f.name).to_string()
+    FramingValue::of_protocol(params).map_or(DEFAULT_FRAMING, |f| f.name).to_string()
 }
 
 fn field_shape(u: &FrozenUnit, known: &HashSet<&str>) -> Option<FieldShape> {
@@ -704,8 +709,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognised_framing_falls_back_to_datagram() {
-        assert_eq!(framing_of(&framing_param("nonsense")), "datagram");
-        assert_eq!(framing_of(&[]), "datagram");
+    fn no_framing_is_the_default_datagram2() {
+        assert_eq!(framing_of(&[]), "datagram@2");
+        assert_eq!(framing_of(&framing_param("datagram@2")), "datagram@2");
     }
 }
