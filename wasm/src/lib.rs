@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use comline_core::package::config::ir::interpreter::ProjectInterpreter;
-use comline_core::schema::idl::annotations::canonical_value;
+use comline_core::schema::idl::annotations::FramingValue;
 use comline_core::schema::idl::grammar::Declaration;
 use comline_core::schema::ir::frozen::types::TypeRef as FrozenType;
 use comline_core::schema::ir::compiler::interpreter::incremental::IncrementalInterpreter;
@@ -545,19 +545,11 @@ fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -
 /// `comline.datagram`, so a protocol both real generators emit as
 /// JSON-RPC was rendered as datagram in the playground - the one place a
 /// reader would compare them side by side.
+///
+/// Read through core's `FramingValue`, so `"jsonrpc"` and
+/// `{ name = "jsonrpc", ... }` are the same framing here as everywhere.
 fn framing_of(params: &[FrozenUnit]) -> String {
-    for p in params {
-        if let FrozenUnit::Property { name, value } = p {
-            if name == "framing" {
-                return value
-                    .as_text()
-                    .and_then(|written| canonical_value("framing", &written))
-                    .unwrap_or("datagram")
-                    .to_string();
-            }
-        }
-    }
-    "datagram".to_string()
+    FramingValue::of_protocol(params).map_or("datagram", |f| f.name).to_string()
 }
 
 fn field_shape(u: &FrozenUnit, known: &HashSet<&str>) -> Option<FieldShape> {
@@ -697,6 +689,18 @@ mod tests {
         for spelling in ["datagram", "comline.datagram"] {
             assert_eq!(framing_of(&framing_param(spelling)), "datagram", "{spelling}");
         }
+    }
+
+    #[test]
+    fn a_framing_dictionary_names_its_framing() {
+        let dict = vec![FrozenUnit::Property {
+            name: "framing".to_string(),
+            value: ConfigValue::Dict(vec![
+                ("name".to_string(), ConfigValue::Str("json-rpc".to_string())),
+                ("method_names".to_string(), ConfigValue::Name("qualified".to_string())),
+            ]),
+        }];
+        assert_eq!(framing_of(&dict), "jsonrpc");
     }
 
     #[test]
