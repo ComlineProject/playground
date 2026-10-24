@@ -168,6 +168,9 @@ pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
         // The preview shows the checks; whether decoding runs them is a
         // consumer's `comline.toml` choice the playground has no file for.
         validate_on_decode: Default::default(),
+        // `async` is a consumer's `comline.toml` choice too: the preview
+        // shows the blocking form.
+        async_api: false,
         package: PackageMeta {
             name: "playground".to_string(),
             version: "0.1.0".to_string(),
