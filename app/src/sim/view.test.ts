@@ -99,7 +99,6 @@ test("1d — place, connect, call, and see the reply and frames", async () => {
   fire(client, "click");
   pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
   await tick();
-  await setWire(sim, "json", client);
 
   // the call form appears; send `send`
   const sendBlk = callBlock(sim.el, "send");
@@ -271,18 +270,6 @@ function place(sim: { el: HTMLElement }) {
     server: nodes.find((n) => n.classList.contains("role-server"))!,
     client: nodes.find((n) => n.classList.contains("role-client"))!,
   };
-}
-
-/** Pick the wire format of the only connection (select its wire, choose in the
- *  inspector), then select `back` again so its call form is shown. */
-async function setWire(sim: { el: HTMLElement }, value: string, back: HTMLElement) {
-  fire(sim.el.querySelector(".sim-wire line")!, "click");
-  const sel = [...sim.el.querySelectorAll(".sim-inspector select")].find((s) =>
-    [...(s as HTMLSelectElement).options].some((o) => o.value === "msgpack"),
-  ) as HTMLSelectElement;
-  pick(sel, value);
-  await tick();
-  fire(back, "click");
 }
 
 /** The CALL tab lists every function as its own block — grab one by name. */
@@ -929,7 +916,7 @@ test("2g — a call over packed (the default) settles, and the inspector decodes
   (reqRow as HTMLDetailsElement).open = true;
   fire(reqRow, "toggle");
   const body = reqRow.querySelector(".frame-body")!.textContent!;
-  assert.match(body, /"hello"/, "the request's params are decoded from the packed bytes");
+  assert.match(body, /"text": "hello"/, "the request's params are decoded from the packed bytes, by name");
   assert.match(body, /68 65 6c 6c 6f/, "and the hex shows the bytes of `hello`");
   sim.destroy();
 });
@@ -1202,8 +1189,6 @@ test(
     fire(client, "click");
     pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
     await tick();
-    // the script's reply isn't a `Message` as packed@1 would lay it out
-    await setWire(sim, "json", client);
     const blk = callBlock(sim.el, "send");
     (blk.querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
     const out = fireSend(sim.el, "send");
