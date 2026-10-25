@@ -59,7 +59,7 @@ interface ModelConn {
   clientId: string;
   serverId: string;
   faults: Faults;
-  framing: "auto" | "datagram" | "jsonrpc";
+  framing: "auto" | "datagram" | "datagram@2" | "jsonrpc";
   wireFormat: "json" | "msgpack";
 }
 interface Model {
@@ -1100,7 +1100,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     inspectorEl.append(section("transport"));
     const framingSel = document.createElement("select");
     framingSel.title = "auto follows the protocol's declared framing";
-    for (const v of ["auto", "datagram", "jsonrpc"] as const) {
+    for (const v of ["auto", "datagram@2", "datagram", "jsonrpc"] as const) {
       framingSel.append(opt(v, v, v === conn.framing));
     }
     const wireSel = document.createElement("select");

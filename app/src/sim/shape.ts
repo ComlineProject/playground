@@ -19,7 +19,7 @@ export interface SchemaShape {
 
 export interface ProtocolShape {
   name: string;
-  framing: "datagram" | "jsonrpc";
+  framing: "datagram" | "datagram@2" | "jsonrpc";
   functions: FnShape[];
 }
 

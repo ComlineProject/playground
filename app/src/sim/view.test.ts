@@ -122,7 +122,7 @@ test("1d — place, connect, call, and see the reply and frames", async () => {
   (reqRow as HTMLDetailsElement).open = true;
   fire(reqRow, "toggle");
   assert.match(reqRow.querySelector(".frame-body")!.textContent!, /"text": "hello"/);
-  assert.match(reqRow.querySelector(".frame-body")!.textContent!, /datagram@1/);
+  assert.match(reqRow.querySelector(".frame-body")!.textContent!, /datagram@2/);
 
   sim.destroy();
 });
@@ -837,12 +837,12 @@ test("2g — `compare` runs the call over every framing/codec combo", async () =
   );
   assert.deepEqual(
     combos.sort(),
-    ["datagram/json", "datagram/msgpack", "jsonrpc/json"],
+    ["datagram/json", "datagram/msgpack", "datagram@2/json", "datagram@2/msgpack", "jsonrpc/json"],
     "every combo Chat's framing supports",
   );
   assert.match(
     blk.querySelector(".compare-note")!.textContent!,
-    /same reply on all 3 framing\/codec combinations/,
+    /same reply on all 5 framing\/codec combinations/,
     "the decoded reply is identical across encodings",
   );
   assert.equal(blk.querySelectorAll(".compare-table tr.mismatch").length, 0);
@@ -864,7 +864,7 @@ test("2g — the connection inspector edits framing / wire format", async () => 
   const wireSel = () => selects().find((s) => [...s.options].some((o) => o.value === "msgpack"))!;
 
   assert.equal(framingSel().value, "auto", "starts on auto");
-  assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /auto → datagram/);
+  assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /auto → datagram@2/);
 
   pick(wireSel(), "msgpack");
   await tick();

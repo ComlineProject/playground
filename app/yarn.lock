@@ -779,7 +779,7 @@ __metadata:
     "@lezer/highlight": "npm:^1.2.3"
     "@types/node": "npm:^20.19.43"
     comline-examples: "git+https://github.com/ComlineProject/examples.git#f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7"
-    comline-simulator: "git+https://github.com/ComlineProject/simulator.git#3ec4bafd8e1a0d92dfe9ea29a056cf0f4c425565"
+    comline-simulator: "git+https://github.com/ComlineProject/simulator.git#580af50a621bd69ce674c3021a1937320d6f56ba"
     linkedom: "npm:^0.18.13"
     tsx: "npm:^4.23.13"
     typescript: "npm:^5.6.0"
@@ -787,10 +787,10 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"comline-simulator@git+https://github.com/ComlineProject/simulator.git#3ec4bafd8e1a0d92dfe9ea29a056cf0f4c425565":
+"comline-simulator@git+https://github.com/ComlineProject/simulator.git#580af50a621bd69ce674c3021a1937320d6f56ba":
   version: 0.0.0
-  resolution: "comline-simulator@https://github.com/ComlineProject/simulator.git#commit=3ec4bafd8e1a0d92dfe9ea29a056cf0f4c425565"
-  checksum: 10c0/d0c2633e95fb2924a84efa151fbbc9b103d7f1c44f7362f7ca9dd86daa41376e6dae22b530e99c28d2e006eef07725294e4dc9f88c06378fb5d2237dd1141690
+  resolution: "comline-simulator@https://github.com/ComlineProject/simulator.git#commit=580af50a621bd69ce674c3021a1937320d6f56ba"
+  checksum: 10c0/b341ca4d9f160660487808bce2c86441e44fb1c10cfb9c46169625be03ba0738337dd9c72ac9ec01b21cbb0c7549b6da39c3e0e79479edba3a2d59e751bcb7b8
   languageName: node
   linkType: hard
 
