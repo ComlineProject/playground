@@ -60,7 +60,7 @@ interface ModelConn {
   serverId: string;
   faults: Faults;
   framing: "auto" | "datagram" | "datagram@2" | "jsonrpc";
-  wireFormat: "json" | "msgpack";
+  wireFormat: "packed" | "json" | "msgpack";
 }
 interface Model {
   nodes: ModelNode[];
@@ -1104,8 +1104,8 @@ export function createSim(opts: SimOpts = {}): SimView {
       framingSel.append(opt(v, v, v === conn.framing));
     }
     const wireSel = document.createElement("select");
-    wireSel.title = "jsonrpc framing is JSON-only";
-    for (const v of ["json", "msgpack"] as const) wireSel.append(opt(v, v, v === conn.wireFormat));
+    wireSel.title = "jsonrpc framing is JSON-only; packed is the default";
+    for (const v of ["packed", "json", "msgpack"] as const) wireSel.append(opt(v, v, v === conn.wireFormat));
     const syncWireFormat = () => {
       wireSel.disabled = selValue(framingSel) === "jsonrpc";
       if (wireSel.disabled) {

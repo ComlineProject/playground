@@ -59,6 +59,9 @@ test("a behaviour swap and a shareable link work through the facade", () => {
   const srv = sim.add_instance(spec("server"));
   const cli = sim.add_instance(spec("client"));
   const conn = sim.add_connection(cli, srv);
+  // `echo` replies with the arguments, which aren't a `Message`: packed@1 (the
+  // default) would fault the call, so this one speaks the self-describing JSON.
+  sim.set_transport(conn, "auto", "json");
 
   sim.set_behavior(srv, "send", "echo", "{}");
   const id = sim.call(conn, "send", JSON.stringify(["echo me"]));
