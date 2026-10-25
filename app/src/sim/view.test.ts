@@ -99,6 +99,7 @@ test("1d — place, connect, call, and see the reply and frames", async () => {
   fire(client, "click");
   pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
   await tick();
+  await setWire(sim, "json", client);
 
   // the call form appears; send `send`
   const sendBlk = callBlock(sim.el, "send");
@@ -270,6 +271,18 @@ function place(sim: { el: HTMLElement }) {
     server: nodes.find((n) => n.classList.contains("role-server"))!,
     client: nodes.find((n) => n.classList.contains("role-client"))!,
   };
+}
+
+/** Pick the wire format of the only connection (select its wire, choose in the
+ *  inspector), then select `back` again so its call form is shown. */
+async function setWire(sim: { el: HTMLElement }, value: string, back: HTMLElement) {
+  fire(sim.el.querySelector(".sim-wire line")!, "click");
+  const sel = [...sim.el.querySelectorAll(".sim-inspector select")].find((s) =>
+    [...(s as HTMLSelectElement).options].some((o) => o.value === "msgpack"),
+  ) as HTMLSelectElement;
+  pick(sel, value);
+  await tick();
+  fire(back, "click");
 }
 
 /** The CALL tab lists every function as its own block — grab one by name. */
@@ -837,12 +850,20 @@ test("2g — `compare` runs the call over every framing/codec combo", async () =
   );
   assert.deepEqual(
     combos.sort(),
-    ["datagram/json", "datagram/msgpack", "datagram@2/json", "datagram@2/msgpack", "jsonrpc/json"],
+    [
+      "datagram/json",
+      "datagram/msgpack",
+      "datagram/packed",
+      "datagram@2/json",
+      "datagram@2/msgpack",
+      "datagram@2/packed",
+      "jsonrpc/json",
+    ],
     "every combo Chat's framing supports",
   );
   assert.match(
     blk.querySelector(".compare-note")!.textContent!,
-    /same reply on all 5 framing\/codec combinations/,
+    /same reply on all 7 framing\/codec combinations/,
     "the decoded reply is identical across encodings",
   );
   assert.equal(blk.querySelectorAll(".compare-table tr.mismatch").length, 0);
@@ -865,6 +886,12 @@ test("2g — the connection inspector edits framing / wire format", async () => 
 
   assert.equal(framingSel().value, "auto", "starts on auto");
   assert.match(sim.el.querySelector(".sim-inspector")!.textContent!, /auto → datagram@2/);
+  assert.deepEqual(
+    [...wireSel().options].map((o) => o.value),
+    ["packed", "json", "msgpack"],
+    "packed is offered first",
+  );
+  assert.equal(wireSel().value, "packed", "a new connection speaks packed");
 
   pick(wireSel(), "msgpack");
   await tick();
@@ -875,6 +902,66 @@ test("2g — the connection inspector edits framing / wire format", async () => 
   assert.equal(wireSel().disabled, true, "jsonrpc framing locks the wire format to json");
   assert.equal(wireSel().value, "json");
   sim.destroy();
+});
+
+test("2g — a call over packed (the default) settles, and the inspector decodes its params", async () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server, client } = place(sim);
+  fire(server, "click");
+  const cfg = sim.el.querySelector(".behavior-config") as HTMLTextAreaElement;
+  cfg.value = JSON.stringify({ value: { body: "HI", seq: 3 } });
+  fire(cfg, "change");
+  fire(client, "click");
+  pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+
+  (callBlock(sim.el, "send").querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
+  const out = fireSend(sim.el, "send");
+  await tick();
+  assert.ok(out.classList.contains("ok"), `the call settled: ${out.textContent}`);
+  assert.match(out.textContent!, /"body": "HI"/);
+  assert.match(out.textContent!, /"seq": 3/);
+
+  const frames = [...sim.el.querySelectorAll(".sim-frames-list .frame-row")] as HTMLElement[];
+  const reqRow = frames.find((r) => r.querySelector(".frame-fn")?.textContent === "send")!;
+  (reqRow as HTMLDetailsElement).open = true;
+  fire(reqRow, "toggle");
+  const body = reqRow.querySelector(".frame-body")!.textContent!;
+  assert.match(body, /"hello"/, "the request's params are decoded from the packed bytes");
+  assert.match(body, /68 65 6c 6c 6f/, "and the hex shows the bytes of `hello`");
+  sim.destroy();
+});
+
+test("2g — a session link with no wireFormat opens as JSON", async () => {
+  const build = createSim();
+  document.body.append(build.el);
+  build.setShape(shape());
+  const { server, client } = place(build);
+  fire(client, "click");
+  pick(build.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  await tick();
+  const payload = build.serialize();
+  build.destroy();
+
+  // a link made before packed@1: the same session without the connection's wireFormat
+  const b64 = (s: string) => s.replace(/-/g, "+").replace(/_/g, "/");
+  const env = JSON.parse(Buffer.from(b64(payload), "base64").toString());
+  assert.equal(env.session.connections[0].wireFormat, "packed", "a new link records packed");
+  delete env.session.connections[0].wireFormat;
+  const old = Buffer.from(JSON.stringify(env)).toString("base64url");
+
+  const restored = createSim();
+  document.body.append(restored.el);
+  restored.setShape(shape(), old);
+  await tick();
+  fire(restored.el.querySelector(".sim-wire line")!, "click");
+  const wireSel = [...restored.el.querySelectorAll(".sim-inspector select")].find((s) =>
+    [...(s as HTMLSelectElement).options].some((o) => o.value === "msgpack"),
+  ) as HTMLSelectElement;
+  assert.equal(wireSel.value, "json", "an old link keeps the only format it could have used");
+  restored.destroy();
 });
 
 test("2c — the fault inspector drops responses: the edge goes faulty and the call times out", async () => {
@@ -1115,6 +1202,8 @@ test(
     fire(client, "click");
     pick(sim.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
     await tick();
+    // the script's reply isn't a `Message` as packed@1 would lay it out
+    await setWire(sim, "json", client);
     const blk = callBlock(sim.el, "send");
     (blk.querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
     const out = fireSend(sim.el, "send");

@@ -72,6 +72,15 @@ interface Model {
   clockMode: "real" | "stepped";
 }
 
+/** The call form reads `{ argName: value }`. packed@1 lays a call's arguments
+ *  out in declaration order, so for it (and for `compare`, which runs it) the
+ *  engine takes them as an array. */
+function positional(fn: FnShape, params: unknown): unknown[] {
+  if (Array.isArray(params)) return params;
+  const named = (params ?? {}) as Record<string, unknown>;
+  return fn.args.map((a) => named[a.name] ?? null);
+}
+
 /** A settled call's outcome, as `Sim.result()` / `Sim.compare()` report it. */
 interface CallOutcome {
   status: string;
@@ -1434,7 +1443,15 @@ export function createSim(opts: SimOpts = {}): SimView {
           out.textContent = "…";
           let id: number;
           try {
-            id = sim.call(connId, fn.name, JSON.stringify(params));
+            id = sim.call(
+              connId,
+              fn.name,
+              JSON.stringify(
+                connsFor(i.id).find((c) => c.id === connId)?.wireFormat === "packed"
+                  ? positional(fn, params)
+                  : params,
+              ),
+            );
           } catch (e) {
             out.textContent = String((e as Error).message ?? e);
             out.classList.add("err");
@@ -1456,7 +1473,7 @@ export function createSim(opts: SimOpts = {}): SimView {
           }
           let raw: string;
           try {
-            raw = sim.compare(connId, fn.name, JSON.stringify(params));
+            raw = sim.compare(connId, fn.name, JSON.stringify(positional(fn, params)));
           } catch (e) {
             compareOut.replaceChildren(muted(String((e as Error).message ?? e), "err"));
             return;
