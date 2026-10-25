@@ -23,7 +23,7 @@
     "@codemirror/view": "^6.34.0",
     "@lezer/highlight": "^1.2.3",
     "comline-examples": "git+https://github.com/ComlineProject/examples.git#f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7",
-    "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#279a56c1ddabb8f1ecd33dd5f3686c52dd88aeee"
+    "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#1eab1f84f1ae7760135ca4a7a519c78091001a44"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
