@@ -125,7 +125,14 @@ function inputFor(ty: TypeRef, schema: SchemaShape, initial: unknown): { el: HTM
     }
 
     case "ref": {
-      const def = schema.types.find((t) => t.name === ty.name);
+      // a type alias renders as its target: follow it (depth-capped against a cycle)
+      let def = schema.types.find((t) => t.name === ty.name);
+      for (let depth = 0; def?.kind === "alias" && depth < 8; depth++) {
+        if (def.of.kind !== "ref") return inputFor(def.of, schema, initial);
+        const next: string = def.of.name;
+        def = schema.types.find((t) => t.name === next);
+      }
+      if (def?.kind === "alias") return jsonInput(ty, initial);
       if (def?.kind === "enum") {
         const sel = document.createElement("select");
         sel.className = "arg-input";

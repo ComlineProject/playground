@@ -438,6 +438,9 @@ struct FieldShape {
 enum TypeDef {
     Struct { name: String, fields: Vec<FieldShape> },
     Enum { name: String, variants: Vec<String> },
+    /// `type Name = target`: a name for another type, so a field of this
+    /// type renders as, and encodes as, the target.
+    Alias { name: String, of: TypeRef },
 }
 
 /// A type reference in a signature: core's frozen `TypeRef`, with each named
@@ -473,7 +476,9 @@ pub fn describe_project(files: JsValue) -> JsValue {
         .iter()
         .flat_map(|(_, units)| units.iter())
         .filter_map(|u| match u {
-            FrozenUnit::Struct { name, .. } | FrozenUnit::Enum { name, .. } => Some(name.as_str()),
+            FrozenUnit::Struct { name, .. }
+            | FrozenUnit::Enum { name, .. }
+            | FrozenUnit::TypeAlias { name, .. } => Some(name.as_str()),
             _ => None,
         })
         .collect();
@@ -509,6 +514,10 @@ fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -
             FrozenUnit::Enum { name, variants, .. } => Some(TypeDef::Enum {
                 name: name.clone(),
                 variants: variants.iter().filter_map(enum_variant_name).collect(),
+            }),
+            FrozenUnit::TypeAlias { name, target, .. } => Some(TypeDef::Alias {
+                name: name.clone(),
+                of: type_ref(target, known),
             }),
             _ => None,
         })
@@ -706,6 +715,40 @@ mod tests {
             ]),
         }];
         assert_eq!(framing_of(&dict), "jsonrpc");
+    }
+
+    #[test]
+    fn a_type_alias_is_described_and_references_to_it_are_refs() {
+        let files = vec![FileInput {
+            path: "alias.ids".to_string(),
+            source: "type Handle = string\n\nstruct Account {\n    owner: Handle\n}\n"
+                .to_string(),
+        }];
+        let (_, frozen) = interpret_project(&files);
+        let known: HashSet<&str> = frozen
+            .iter()
+            .flat_map(|(_, units)| units.iter())
+            .filter_map(|u| match u {
+                FrozenUnit::Struct { name, .. }
+                | FrozenUnit::Enum { name, .. }
+                | FrozenUnit::TypeAlias { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let (ns, units) = &frozen[0];
+        let schema = serde_json::to_value(describe_schema(ns, units, &known)).unwrap();
+        let types = schema["types"].as_array().unwrap();
+
+        let alias = types.iter().find(|t| t["name"] == "Handle").expect("alias described");
+        assert_eq!(
+            *alias,
+            serde_json::json!({"kind":"alias","name":"Handle","of":{"kind":"prim","name":"string"}})
+        );
+        let account = types.iter().find(|t| t["name"] == "Account").expect("struct described");
+        assert_eq!(
+            account["fields"][0]["ty"],
+            serde_json::json!({"kind":"ref","name":"Handle"})
+        );
     }
 
     #[test]

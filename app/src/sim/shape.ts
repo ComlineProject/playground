@@ -60,7 +60,9 @@ export interface FieldShape {
 
 export type TypeDef =
   | { kind: "struct"; name: string; fields: FieldShape[] }
-  | { kind: "enum"; name: string; variants: string[] };
+  | { kind: "enum"; name: string; variants: string[] }
+  /** `type Name = target`: a name for another type. */
+  | { kind: "alias"; name: string; of: TypeRef };
 
 export type TypeRef =
   | { kind: "prim"; name: string }
@@ -114,6 +116,7 @@ export function zeroValue(ty: TypeRef, types: TypeDef[], seen: string[] = []): u
       if (seen.includes(ty.name)) return null;
       const def = types.find((t) => t.name === ty.name);
       if (!def) return null;
+      if (def.kind === "alias") return zeroValue(def.of, types, [...seen, ty.name]);
       if (def.kind === "enum") return def.variants[0] ?? null;
       const obj: Record<string, unknown> = {};
       for (const f of def.fields) obj[f.name] = zeroValue(f.ty, types, [...seen, ty.name]);
