@@ -13,6 +13,9 @@ Static — deploys to GitHub Pages, no server.
 wasm/     comline-playground-wasm — the editor's Rust crate, wasm-bindgen surface
             compile(source)                -> { ok, diagnostics, ir, units }
             generate(source, target, mode) -> { files, error }
+            encode_request / decode_response  — the same request, for an
+                                    external WASI generator, and its answer
+                                    checked as the CLI checks it
             describe_project(files)        -> the schema shape the sim runs on
             semantic_tokens / hover / completions   — the LSP handlers verbatim
           deps: comline-core, comline-codegen, comline-codegen-rust,

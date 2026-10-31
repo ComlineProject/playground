@@ -24,7 +24,7 @@ jobs:
 
       # The runner ships a current stable toolchain — just add the wasm target.
       - name: Rust target
-        run: rustup target add wasm32-unknown-unknown
+        run: rustup target add wasm32-unknown-unknown wasm32-wasip1
 
       # Editor wasm crate + anything the sim git-dep's `prepack` compiles on a
       # cache miss (registry crates, the pinned wasm-bindgen-cli in ~/.cargo/bin).
@@ -54,6 +54,22 @@ jobs:
 
       - name: Build editor WASM
         run: wasm-pack build wasm --release --target web --out-dir ../app/src/wasm --out-name comline_playground_wasm
+
+      - name: Test editor crate
+        run: cargo test --manifest-path wasm/Cargo.toml
+
+      # The Rust generator as a WASI module, for the test that runs it through
+      # the browser WASI shim and compares it with the linked one. Built from
+      # the comline-rust rev `wasm/Cargo.toml` pins, read from there so the
+      # two can't drift.
+      - name: Build comline-gen-rust (wasm32-wasip1)
+        run: |
+          rev=$(sed -n 's/^comline-codegen-rust = .*rev = "\([0-9a-f]*\)".*/\1/p' wasm/Cargo.toml)
+          git clone --quiet https://github.com/ComlineProject/comline-rust "$RUNNER_TEMP/comline-rust"
+          git -C "$RUNNER_TEMP/comline-rust" checkout --quiet "$rev"
+          cargo build --manifest-path "$RUNNER_TEMP/comline-rust/Cargo.toml" --target-dir wasm/target/gen \
+            -p comline-codegen-rust --bin comline-gen-rust --target wasm32-wasip1 --release
+          echo "COMLINE_GEN_RUST_WASM=$PWD/wasm/target/gen/wasm32-wasip1/release/comline-gen-rust.wasm" >> "$GITHUB_ENV"
 
       - name: Node
         uses: actions/setup-node@v4
