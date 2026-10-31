@@ -16,6 +16,9 @@ wasm/     comline-playground-wasm — the editor's Rust crate, wasm-bindgen surf
             encode_request / decode_response  — the same request, for an
                                     external WASI generator, and its answer
                                     checked as the CLI checks it
+            encode_describe / check_description — the Describe call first,
+                                    checked as the CLI checks it (protocol,
+                                    IR format, language and version)
             describe_project(files)        -> the schema shape the sim runs on
             semantic_tokens / hover / completions   — the LSP handlers verbatim
           deps: comline-core, comline-codegen, comline-codegen-rust,
@@ -28,6 +31,8 @@ app/      a Vite site: a CodeMirror 6 editor (highlighting / diagnostics /
           which builds itself to WASM on `npm install` — `pkg/` (lean) plus
           `pkg-script/` (Rhai, code-split and fetched only when a `script`
           behaviour is picked).
+fixtures/generators/   a hostile WASI generator (one misbehaviour per
+                       name) for app/src/wasi-generator.test.ts
 .github/workflows/deploy.yml   build editor WASM → npm install (builds the sim
                                WASM) → build site → deploy to Pages
 ```

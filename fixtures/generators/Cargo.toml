@@ -1,0 +1,17 @@
+# Generators that misbehave, for the tests of the WASI runner
+# (app/src/wasi-generator.test.ts). Built in CI for wasm32-wasip1. Its own
+# workspace: not part of the editor wasm's build.
+[package]
+name = "comline-playground-test-generators"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+# The rev wasm/Cargo.toml pins, so the protocol and IR format match.
+comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "b116831182c32e70fb4452ff9fce4b463ce4bd99" }
+
+[profile.release]
+opt-level = "s"

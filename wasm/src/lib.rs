@@ -37,7 +37,8 @@ use comline_core::schema::ir::frozen::unit::FrozenUnit;
 use comline_core::schema::ir::validation;
 use comline_core::utils::codemap::CodeMap;
 
-use comline_codegen::protocol::{self, FileOut, Request, Response, TargetLanguage};
+use comline_codegen::protocol::{self, Description, FileOut, LanguageInfo, Request, Response, TargetLanguage};
+use comline_codegen::versions::LangVersion;
 use comline_codegen::{GenerateRequest, Mode, PackageMeta};
 
 use comline_language_server::analysis::diagnostics::generate_diagnostics;
@@ -222,6 +223,128 @@ pub fn decode_response(bytes: &[u8]) -> JsValue {
     to_js(&result)
 }
 
+/// The generator protocol version this playground speaks: the CLI's.
+#[wasm_bindgen]
+pub fn protocol_version() -> u32 {
+    protocol::PROTOCOL_VERSION
+}
+
+/// The IR format this playground's `comline-core` freezes, and so what a
+/// request carries.
+#[wasm_bindgen]
+pub fn ir_format() -> u32 {
+    protocol::IR_FORMAT
+}
+
+/// A `Describe` request, encoded for a generator's stdin: what the CLI asks
+/// a generator before anything else.
+#[wasm_bindgen]
+pub fn encode_describe() -> Result<Vec<u8>, String> {
+    protocol::encode(&Request::describe()).map_err(|e| format!("the request doesn't encode: {e}"))
+}
+
+#[derive(Serialize)]
+struct CheckedDescription {
+    /// The language the generator offers for `target`, as it describes it.
+    /// Absent on error.
+    language: Option<String>,
+    /// The floor of the entry picked for the target's version.
+    floor: Option<String>,
+    error: Option<String>,
+}
+
+/// A generator's answer to [`encode_describe`], checked as the CLI checks
+/// it (`External::describe`, then `external::select`) against what this
+/// playground would ask for `target`: the protocol version, the IR format,
+/// and the target's language and version. `who` names the generator in
+/// messages (`` generator `x.wasm` ``). `{ language, floor, error: null }`,
+/// or `{ language: null, floor: null, error }`.
+#[wasm_bindgen]
+pub fn check_description(bytes: &[u8], who: &str, target: &str) -> JsValue {
+    to_js(&match checked_description(bytes, who, target) {
+        Ok(info) => CheckedDescription { language: Some(info.id.clone()), floor: Some(info.versions.floor.clone()), error: None },
+        Err(error) => CheckedDescription { language: None, floor: None, error: Some(error) },
+    })
+}
+
+fn checked_description(bytes: &[u8], who: &str, target: &str) -> Result<LanguageInfo, String> {
+    let description = match protocol::decode::<Response>(bytes) {
+        Ok(Response::Describe(d)) => d,
+        Ok(Response::Error { message }) => return Err(format!("{who} refused to describe itself: {message}")),
+        Ok(Response::Generate(_)) => return Err(format!("{who} answered `Describe` with generated files")),
+        Err(e) => return Err(format!("{who} answered with something that isn't a protocol response: {e}")),
+    };
+    check_versions(&description, who)?;
+    let (language, version) = target_language(target)?;
+    select(who, &description, language, version).cloned()
+}
+
+/// The CLI's protocol and IR checks (`External::describe`).
+fn check_versions(description: &Description, who: &str) -> Result<(), String> {
+    let (min, max) = description.protocols;
+    let ours = protocol::PROTOCOL_VERSION;
+    if !(min..=max).contains(&ours) {
+        let theirs = if min == max { min.to_string() } else { format!("{min} to {max}") };
+        return Err(format!("{who} speaks generator protocol {theirs}, and this playground speaks protocol {ours}"));
+    }
+    let ir = protocol::IR_FORMAT;
+    if !description.ir_formats.contains(&ir) {
+        return Err(format!(
+            "{who} reads IR format {}, and this playground writes IR format {ir}",
+            list(description.ir_formats.iter())
+        ));
+    }
+    Ok(())
+}
+
+/// `items` as `a, b, c`, or `none`.
+fn list<T: std::fmt::Display>(items: impl Iterator<Item = T>) -> String {
+    let all: Vec<String> = items.map(|i| i.to_string()).collect();
+    if all.is_empty() {
+        "none".to_string()
+    } else {
+        all.join(", ")
+    }
+}
+
+/// The entry of `description` for `language#version`: the newest floor at
+/// or below the version. The CLI's `external::select`.
+fn select<'d>(who: &str, description: &'d Description, language: &str, version: &str) -> Result<&'d LanguageInfo, String> {
+    let offered: Vec<&LanguageInfo> =
+        description.languages.iter().filter(|l| l.id.eq_ignore_ascii_case(language)).collect();
+    if offered.is_empty() {
+        return Err(format!(
+            "{who} doesn't generate `{language}`; it offers {}",
+            list(description.languages.iter().map(|l| format!("`{}`", l.id)))
+        ));
+    }
+    let declared = LangVersion::parse(version).ok_or_else(|| {
+        format!("`{language}#{version}`: `{version}` isn't a version - expected dotted numbers, like `1.70.0`")
+    })?;
+    offered
+        .iter()
+        .filter_map(|l| LangVersion::parse(&l.versions.floor).map(|floor| (floor, *l)))
+        .filter(|(floor, _)| *floor <= declared)
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, l)| l)
+        .ok_or_else(|| {
+            format!(
+                "{who} handles `{language}` from {} on, not `{version}`",
+                list(offered.iter().map(|l| format!("`{}`", l.versions.floor)))
+            )
+        })
+}
+
+/// The language and version the playground generates `target` for: the
+/// linked generator's own version.
+fn target_language(target: &str) -> Result<(&'static str, &'static str), String> {
+    match target {
+        "rust" | "rs" => Ok(("rust", comline_codegen_rust::LANG_VERSION)),
+        "typescript" | "ts" => Ok(("typescript", comline_codegen_typescript::LANG_VERSION)),
+        other => Err(format!("unknown target `{other}`")),
+    }
+}
+
 /// The files in an encoded response, after the CLI's checks
 /// (`external::files`), with at most `cap` bytes of contents in all.
 fn checked_files(bytes: &[u8], cap: usize) -> Result<Vec<FileOut>, String> {
@@ -284,11 +407,7 @@ fn generate_request(files: JsValue, target: &str, mode: &str) -> Result<Generate
         return Err("no schema parses".to_string());
     }
 
-    let (language, version) = match target {
-        "rust" | "rs" => ("rust", comline_codegen_rust::LANG_VERSION),
-        "typescript" | "ts" => ("typescript", comline_codegen_typescript::LANG_VERSION),
-        other => return Err(format!("unknown target `{other}`")),
-    };
+    let (language, version) = target_language(target)?;
     let mode = match mode {
         "lib" => Mode::Lib,
         _ => Mode::Code,
@@ -834,6 +953,65 @@ mod tests {
         let error = protocol::encode(&Response::Error { message: "no".into() }).unwrap();
         assert_eq!(checked_files(&error, GENERATED_CAP).unwrap_err(), "the generator: no");
         assert!(checked_files(b"not cbor", GENERATED_CAP).unwrap_err().contains("doesn't decode"));
+    }
+
+    fn description(protocols: (u32, u32), ir_formats: Vec<u32>, languages: &[(&str, &str)]) -> Vec<u8> {
+        let languages = languages
+            .iter()
+            .map(|(id, floor)| LanguageInfo {
+                id: id.to_string(),
+                ext: "x".into(),
+                versions: protocol::VersionsInfo {
+                    floor: floor.to_string(),
+                    changes: vec![],
+                    verified_up_to: floor.to_string(),
+                    forward_compatible: true,
+                },
+                support: vec![],
+            })
+            .collect();
+        protocol::encode(&Response::Describe(Description { languages, protocols, ir_formats })).unwrap()
+    }
+
+    const WHO: &str = "generator `g.wasm`";
+
+    #[test]
+    fn a_description_is_checked_as_the_cli_checks_it() {
+        let (p, ir) = (protocol::PROTOCOL_VERSION, protocol::IR_FORMAT);
+        let good = description((p, p), vec![ir], &[("rust", "1.0.0"), ("rust", "1.80.0"), ("rust", "9.0.0")]);
+        let picked = checked_description(&good, WHO, "rust").unwrap();
+        assert_eq!(picked.versions.floor, "1.80.0");
+
+        let error = checked_description(&description((7, 7), vec![ir], &[("rust", "1.0.0")]), WHO, "rust").unwrap_err();
+        assert_eq!(error, format!("{WHO} speaks generator protocol 7, and this playground speaks protocol {p}"));
+        let error = checked_description(&description((p + 1, p + 3), vec![ir], &[]), WHO, "rust").unwrap_err();
+        assert!(error.contains(&format!("protocol {} to {}", p + 1, p + 3)), "{error}");
+
+        let error = checked_description(&description((p, p), vec![ir + 1], &[("rust", "1.0.0")]), WHO, "rust").unwrap_err();
+        assert_eq!(error, format!("{WHO} reads IR format {}, and this playground writes IR format {ir}", ir + 1));
+
+        let error = checked_description(&description((p, p), vec![ir], &[("go", "1.0")]), WHO, "rust").unwrap_err();
+        assert_eq!(error, format!("{WHO} doesn't generate `rust`; it offers `go`"));
+
+        let error = checked_description(&description((p, p), vec![ir], &[("rust", "9.0.0")]), WHO, "rust").unwrap_err();
+        assert_eq!(
+            error,
+            format!("{WHO} handles `rust` from `9.0.0` on, not `{}`", comline_codegen_rust::LANG_VERSION)
+        );
+    }
+
+    #[test]
+    fn a_description_that_isnt_one_is_refused() {
+        let error = protocol::encode(&Response::Error { message: "no".into() }).unwrap();
+        assert_eq!(checked_description(&error, WHO, "rust").unwrap_err(), format!("{WHO} refused to describe itself: no"));
+        assert!(checked_description(&response(vec![]), WHO, "rust").unwrap_err().contains("with generated files"));
+        assert!(checked_description(b"junk", WHO, "rust").unwrap_err().contains("isn't a protocol response"));
+    }
+
+    #[test]
+    fn the_describe_request_decodes_as_one() {
+        let request: Request = protocol::decode(&encode_describe().unwrap()).unwrap();
+        assert_eq!(request, Request::describe());
     }
 
     #[test]
