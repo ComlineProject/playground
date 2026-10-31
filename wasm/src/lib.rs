@@ -25,6 +25,7 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use comline_core::package::config::ir::frozen::FrozenUnit as ConfigUnit;
 use comline_core::package::config::ir::interpreter::ProjectInterpreter;
 use comline_core::schema::idl::annotations::{FramingValue, DEFAULT_FORMAT, DEFAULT_FRAMING};
 use comline_core::schema::idl::grammar::Declaration;
@@ -36,7 +37,8 @@ use comline_core::schema::ir::frozen::unit::FrozenUnit;
 use comline_core::schema::ir::validation;
 use comline_core::utils::codemap::CodeMap;
 
-use comline_codegen::{GenRequest, Mode, PackageMeta};
+use comline_codegen::protocol::{self, FileOut, Request, Response, TargetLanguage};
+use comline_codegen::{GenerateRequest, Mode, PackageMeta};
 
 use comline_language_server::analysis::diagnostics::generate_diagnostics;
 use comline_language_server::handlers::{completion, hover as hover_h, semantic_tokens};
@@ -137,64 +139,14 @@ struct GenerateResult {
 /// `"rust"` / `"typescript"`; `mode` is `"code"` or `"lib"`.
 #[wasm_bindgen]
 pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
-    let files: Vec<FileInput> = match serde_wasm_bindgen::from_value(files) {
-        Ok(f) => f,
-        Err(e) => {
-            return to_js(&GenerateResult {
-                files: vec![],
-                error: Some(format!("bad file list: {e}")),
-            })
-        }
+    let req = match generate_request(files, target, mode) {
+        Ok(req) => req,
+        Err(error) => return to_js(&GenerateResult { files: vec![], error: Some(error) }),
     };
 
-    let schemas = interpret_project(&files).1;
-    if schemas.is_empty() {
-        return to_js(&GenerateResult {
-            files: vec![],
-            error: Some("no schema parses".to_string()),
-        });
-    }
-
-    let mode = match mode {
-        "lib" => Mode::Lib,
-        _ => Mode::Code,
-    };
-    let req = GenRequest {
-        mode,
-        schemas: &schemas,
-        // No dependency bindings to reference in the browser - std is
-        // generated inline, as it was before the flag existed.
-        external_std: false,
-        // The preview shows the checks; whether decoding runs them is a
-        // consumer's `comline.toml` choice the playground has no file for.
-        validate_on_decode: Default::default(),
-        // `async` is a consumer's `comline.toml` choice too: the preview
-        // shows the blocking form.
-        async_api: false,
-        package: PackageMeta {
-            name: "playground".to_string(),
-            version: "0.1.0".to_string(),
-        },
-        // Whichever generator `target` is about to select, named by the
-        // generator itself rather than restated here.
-        lang_version: match target {
-            "typescript" | "ts" => comline_codegen_typescript::LANG_VERSION,
-            _ => comline_codegen_rust::LANG_VERSION,
-        }
-        .to_string(),
-        // The playground's congregation declares no `wire`: the default.
-        wire_format: DEFAULT_FORMAT.to_string(),
-    };
-
-    let generated = match target {
-        "rust" | "rs" => comline_codegen_rust::generate_rust(&req),
-        "typescript" | "ts" => comline_codegen_typescript::generate_typescript(&req),
-        other => {
-            return to_js(&GenerateResult {
-                files: vec![],
-                error: Some(format!("unknown target `{other}`")),
-            })
-        }
+    let generated = match req.target.language.as_str() {
+        "rust" => comline_codegen_rust::generate_rust(&req),
+        _ => comline_codegen_typescript::generate_typescript(&req),
     };
 
     to_js(&match generated {
@@ -215,6 +167,166 @@ pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
     })
 }
 
+#[derive(Serialize)]
+struct EncodedRequest {
+    /// The CBOR-encoded `Request`, for a generator's stdin. Absent on error.
+    #[serde(with = "serde_bytes_opt")]
+    request: Option<Vec<u8>>,
+    error: Option<String>,
+}
+
+/// `Option<Vec<u8>>` as a `Uint8Array` (or `null`), not an array of numbers.
+mod serde_bytes_opt {
+    pub fn serialize<S: serde::Serializer>(bytes: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match bytes {
+            Some(bytes) => s.serialize_bytes(bytes),
+            None => s.serialize_none(),
+        }
+    }
+}
+
+/// The request [`generate_project`] hands the linked generator, encoded for
+/// an external one: a generator protocol `Request` as one CBOR document,
+/// what a generator reads from stdin. `{ request: Uint8Array, error: null }`,
+/// or `{ request: null, error }`.
+#[wasm_bindgen]
+pub fn encode_request(files: JsValue, target: &str, mode: &str) -> JsValue {
+    let encoded = generate_request(files, target, mode)
+        .and_then(|req| protocol::encode(&Request::generate(req)).map_err(|e| format!("the request doesn't encode: {e}")));
+    to_js(&match encoded {
+        Ok(request) => EncodedRequest { request: Some(request), error: None },
+        Err(error) => EncodedRequest { request: None, error: Some(error) },
+    })
+}
+
+/// The most generated file contents one response may carry, all files
+/// together: the CLI's limit (`external::GENERATED_CAP`).
+pub const GENERATED_CAP: usize = 256 * 1024 * 1024;
+
+/// An external generator's stdout, decoded into what [`generate_project`]
+/// returns: `{ files, error }`. Checked as the CLI checks it: an error
+/// response, a description, a bad path or too much output is refused
+/// whole, with nothing in `files`.
+#[wasm_bindgen]
+pub fn decode_response(bytes: &[u8]) -> JsValue {
+    let result = match checked_files(bytes, GENERATED_CAP) {
+        Ok(files) => GenerateResult {
+            files: files
+                .into_iter()
+                .map(|f| GeneratedFile { contents: String::from_utf8_lossy(&f.contents).into_owned(), path: f.path })
+                .collect(),
+            error: None,
+        },
+        Err(error) => GenerateResult { files: vec![], error: Some(error) },
+    };
+    to_js(&result)
+}
+
+/// The files in an encoded response, after the CLI's checks
+/// (`external::files`), with at most `cap` bytes of contents in all.
+fn checked_files(bytes: &[u8], cap: usize) -> Result<Vec<FileOut>, String> {
+    let who = "the generator";
+    let generated = match protocol::decode::<Response>(bytes) {
+        Ok(Response::Generate(generated)) => generated,
+        Ok(Response::Error { message }) => return Err(format!("{who}: {message}")),
+        Ok(Response::Describe(_)) => return Err(format!("{who} answered `Generate` with a description")),
+        Err(e) => return Err(format!("{who}'s response doesn't decode: {e}")),
+    };
+    let mut total = 0usize;
+    for file in &generated.files {
+        check_path(&file.path).map_err(|why| {
+            format!("{who} returned the path `{}`, which {why}; nothing was written", file.path.escape_debug())
+        })?;
+        total = total.saturating_add(file.contents.len());
+    }
+    if total > cap {
+        return Err(format!("{who} generated {total} bytes, over the {cap}-byte limit; nothing was written"));
+    }
+    Ok(generated.files)
+}
+
+/// Why `path` can't be a generated file's path, if it can't: the CLI's rule
+/// (`external::check_path`). It must be relative, `/`-separated and
+/// normalized.
+fn check_path(path: &str) -> Result<(), &'static str> {
+    if path.is_empty() {
+        return Err("is empty");
+    }
+    if path.contains('\0') {
+        return Err("contains a NUL");
+    }
+    if path.contains('\\') {
+        return Err("contains a `\\` (a generated path is `/`-separated)");
+    }
+    if path.starts_with('/') {
+        return Err("is absolute");
+    }
+    for component in path.split('/') {
+        match component {
+            "" => return Err("has an empty component"),
+            "." | ".." => return Err("isn't normalized (it has a `.` or `..` component)"),
+            c if c.contains(':') => return Err("has a `:` (a drive or stream prefix on Windows)"),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The request for `target` and `mode` over the whole file set, with its
+/// encodings filled the way `comline generate` fills them: the official
+/// mappings, then what the playground's package declares (nothing: its
+/// packages are in memory, and core refuses `encodings` there), with no
+/// `comline.toml` overrides.
+fn generate_request(files: JsValue, target: &str, mode: &str) -> Result<GenerateRequest, String> {
+    let files: Vec<FileInput> = serde_wasm_bindgen::from_value(files).map_err(|e| format!("bad file list: {e}"))?;
+    let (_, schemas, declared) = interpret_project(&files);
+    if schemas.is_empty() {
+        return Err("no schema parses".to_string());
+    }
+
+    let (language, version) = match target {
+        "rust" | "rs" => ("rust", comline_codegen_rust::LANG_VERSION),
+        "typescript" | "ts" => ("typescript", comline_codegen_typescript::LANG_VERSION),
+        other => return Err(format!("unknown target `{other}`")),
+    };
+    let mode = match mode {
+        "lib" => Mode::Lib,
+        _ => Mode::Code,
+    };
+    let mut req = GenerateRequest {
+        mode,
+        schemas,
+        package: PackageMeta {
+            name: "playground".to_string(),
+            version: "0.1.0".to_string(),
+        },
+        // The generator's own version, named by the generator rather than
+        // restated here.
+        target: TargetLanguage { language: language.to_string(), version: version.to_string() },
+        // The playground's congregation declares no `wire`: the default.
+        wire_format: DEFAULT_FORMAT.to_string(),
+        // No dependency bindings to reference in the browser - std is
+        // generated inline, as it was before the flag existed.
+        external_std: false,
+        // The preview shows the checks; whether decoding runs them is a
+        // consumer's `comline.toml` choice the playground has no file for.
+        validate_on_decode: Default::default(),
+        // `async` is a consumer's `comline.toml` choice too: the preview
+        // shows the blocking form.
+        async_api: false,
+        // Filled just below.
+        encodings: Default::default(),
+    };
+    comline_codegen::encodings::fill(
+        &mut req,
+        comline_core::encodings::official::units(),
+        &declared,
+        &Default::default(),
+    )
+    .map_err(|e| format!("{e:#}"))?;
+    Ok(req)
+}
+
 /// The shared pipeline behind [`compile_project`] and [`generate_project`]:
 /// build a `ProjectContext` from the cleanly-parsing files, then interpret each
 /// one with full project context (so `use` across files resolves) and validate
@@ -224,9 +336,19 @@ pub fn generate_project(files: JsValue, target: &str, mode: &str) -> JsValue {
 /// every file that froze — the shape `comline-codegen` wants.
 fn interpret_project(
     files: &[FileInput],
-) -> (CompileProjectResult, Vec<(String, Vec<FrozenUnit>)>) {
+) -> (CompileProjectResult, Vec<(String, Vec<FrozenUnit>)>, Vec<ConfigUnit>) {
     let mut context =
         ProjectInterpreter::from_config_source(CONGREGATION).expect("static congregation parses");
+    // The encodings the package declares, for `encodings::fill`. The
+    // congregation is in memory, so it declares none: core reads an
+    // encoding's profile from the package directory.
+    let declared: Vec<ConfigUnit> = context
+        .config_frozen
+        .iter()
+        .flatten()
+        .filter(|u| matches!(u, ConfigUnit::Encoding { .. }))
+        .cloned()
+        .collect();
 
     struct Parsed {
         segments: Vec<String>,
@@ -299,7 +421,7 @@ fn interpret_project(
         schemas.push((p.segments.join("/"), units));
     }
 
-    (CompileProjectResult { files: reports }, schemas)
+    (CompileProjectResult { files: reports }, schemas, declared)
 }
 
 /// `chat.ids` → `["chat"]`, `wire/frame.ids` → `["wire", "frame"]`. Falls back
@@ -682,6 +804,48 @@ fn to_js<T: Serialize>(value: &T) -> JsValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_paths_follow_the_clis_rule() {
+        for good in ["a.rs", "src/lib.rs", "a/b/c.ts", "..a", "a.."] {
+            assert_eq!(check_path(good), Ok(()), "{good}");
+        }
+        for bad in ["", "/etc/passwd", "../x", "a/../b", "./a", "a//b", "a/", "a\\b", "c:/x", "a/b:c", "a\0b"] {
+            assert!(check_path(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    fn response(files: Vec<FileOut>) -> Vec<u8> {
+        protocol::encode(&Response::Generate(protocol::Generated { files, diagnostics: vec![] })).unwrap()
+    }
+
+    #[test]
+    fn a_bad_path_refuses_the_whole_response() {
+        let files = vec![
+            FileOut { path: "ok.rs".into(), contents: b"fine".to_vec() },
+            FileOut { path: "../escape.rs".into(), contents: vec![] },
+        ];
+        let error = checked_files(&response(files), GENERATED_CAP).unwrap_err();
+        assert!(error.contains("`../escape.rs`") && error.contains("nothing was written"), "{error}");
+    }
+
+    #[test]
+    fn an_error_response_or_garbage_is_refused() {
+        let error = protocol::encode(&Response::Error { message: "no".into() }).unwrap();
+        assert_eq!(checked_files(&error, GENERATED_CAP).unwrap_err(), "the generator: no");
+        assert!(checked_files(b"not cbor", GENERATED_CAP).unwrap_err().contains("doesn't decode"));
+    }
+
+    #[test]
+    fn output_over_the_cap_is_refused() {
+        let files = vec![
+            FileOut { path: "a".into(), contents: vec![0; 8] },
+            FileOut { path: "b".into(), contents: vec![0; 9] },
+        ];
+        let bytes = response(files);
+        assert_eq!(checked_files(&bytes, 17).map(|f| f.len()), Ok(2));
+        assert!(checked_files(&bytes, 16).unwrap_err().contains("over the 16-byte limit"));
+    }
     use comline_core::schema::ir::frozen::unit::ConfigValue;
 
     fn framing_param(written: &str) -> Vec<FrozenUnit> {
@@ -724,7 +888,7 @@ mod tests {
             source: "type Handle = string\n\nstruct Account {\n    owner: Handle\n}\n"
                 .to_string(),
         }];
-        let (_, frozen) = interpret_project(&files);
+        let (_, frozen, _) = interpret_project(&files);
         let known: HashSet<&str> = frozen
             .iter()
             .flat_map(|(_, units)| units.iter())

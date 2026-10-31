@@ -1,9 +1,16 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noEmit": true
   },
-  "include": ["src/sim", "src/examples.test.ts"],
+  "include": [
+    "src/sim",
+    "src/examples.test.ts",
+    "src/wasi-generator.ts",
+    "src/wasi-generator.test.ts"
+  ],
   "exclude": []
 }
