@@ -36,7 +36,7 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin
             wasm/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'app/yarn.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'fixtures/generators/Cargo.toml', 'app/yarn.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       # Yarn Berry's global cache holds the *built* `comline-simulator` archive
@@ -70,6 +70,14 @@ jobs:
           cargo build --manifest-path "$RUNNER_TEMP/comline-rust/Cargo.toml" --target-dir wasm/target/gen \
             -p comline-codegen-rust --bin comline-gen-rust --target wasm32-wasip1 --release
           echo "COMLINE_GEN_RUST_WASM=$PWD/wasm/target/gen/wasm32-wasip1/release/comline-gen-rust.wasm" >> "$GITHUB_ENV"
+
+      # The hostile generator the WASI runner's tests stop and refuse, one
+      # misbehaviour per name (fixtures/generators).
+      - name: Build the test generators (wasm32-wasip1)
+        run: |
+          cargo build --manifest-path fixtures/generators/Cargo.toml --target-dir wasm/target/fixtures \
+            --target wasm32-wasip1 --release
+          echo "HOSTILE_GENERATOR_WASM=$PWD/wasm/target/fixtures/wasm32-wasip1/release/hostile.wasm" >> "$GITHUB_ENV"
 
       - name: Node
         uses: actions/setup-node@v4
