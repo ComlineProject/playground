@@ -271,7 +271,7 @@ fn checked_description(bytes: &[u8], who: &str, target: &str) -> Result<Language
     let description = match protocol::decode::<Response>(bytes) {
         Ok(Response::Describe(d)) => d,
         Ok(Response::Error { message }) => return Err(format!("{who} refused to describe itself: {message}")),
-        Ok(Response::Generate(_)) => return Err(format!("{who} answered `Describe` with generated files")),
+        Ok(Response::Generate(_) | Response::Render(_)) => return Err(format!("{who} answered `Describe` with generated files")),
         Err(e) => return Err(format!("{who} answered with something that isn't a protocol response: {e}")),
     };
     check_versions(&description, who)?;
@@ -353,6 +353,7 @@ fn checked_files(bytes: &[u8], cap: usize) -> Result<Vec<FileOut>, String> {
         Ok(Response::Generate(generated)) => generated,
         Ok(Response::Error { message }) => return Err(format!("{who}: {message}")),
         Ok(Response::Describe(_)) => return Err(format!("{who} answered `Generate` with a description")),
+        Ok(Response::Render(_)) => return Err(format!("{who} answered `Generate` with rendered documentation")),
         Err(e) => return Err(format!("{who}'s response doesn't decode: {e}")),
     };
     let mut total = 0usize;
@@ -970,7 +971,7 @@ mod tests {
                 support: vec![],
             })
             .collect();
-        protocol::encode(&Response::Describe(Description { languages, protocols, ir_formats })).unwrap()
+        protocol::encode(&Response::Describe(Description { languages, protocols, ir_formats, renderers: vec![] })).unwrap()
     }
 
     const WHO: &str = "generator `g.wasm`";
