@@ -11,7 +11,7 @@ publish = false
 
 [dependencies]
 # The rev wasm/Cargo.toml pins, so the protocol and IR format match.
-comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "7b51264b216ef4c5e2afbe36897a5b35dafe7e06" }
+comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "ac4425c32f88f98a2a3bfb971a209c173c6559a8" }
 
 [profile.release]
 opt-level = "s"
