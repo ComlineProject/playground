@@ -68,7 +68,7 @@ export type TypeRef =
   | { kind: "prim"; name: string }
   | { kind: "ref"; name: string }
   /** `len` is a fixed array's length (`u8[4]`); absent for `T[]`. */
-  | { kind: "array"; of: TypeRef; len?: number }
+  | { kind: "array"; of: TypeRef; len?: number; max?: number }
   | { kind: "unit" }
   | { kind: "union"; of: TypeRef[] };
 
