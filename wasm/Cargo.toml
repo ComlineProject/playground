@@ -12,13 +12,13 @@ crate-type = ["cdylib", "rlib"]
 # The same crates the CLI and the language server compose — by git rev, so the
 # playground runs *that* code, not a re-implementation. Keep the `comline-core`
 # rev identical across all of them (one `comline-core` in the tree).
-comline-core = { git = "https://github.com/ComlineProject/core", rev = "8f5dc91f1c1c91e192585c3e4b80128621047499" }
-comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "c303722c447ded28d50d7cf32b3164916fa76e5f" }
-comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "2d50fbff670d883c92c363793e888158bb15b7a0" }
-comline-codegen-typescript = { git = "https://github.com/ComlineProject/comline-typescript", rev = "ea9b9e2c70bbd87d99cc028543f73c8ee7749e1c" }
+comline-core = { git = "https://github.com/ComlineProject/core", rev = "1dc294ae97cc3649311e9f78c7eeac8c6f969c31" }
+comline-codegen = { git = "https://github.com/ComlineProject/generation", rev = "83162eac46c3689a4d4a681e3e4dc1be8bdbd856" }
+comline-codegen-rust = { git = "https://github.com/ComlineProject/comline-rust", rev = "addca268903503f997a8f099e30261c2fff0c720" }
+comline-codegen-typescript = { git = "https://github.com/ComlineProject/comline-typescript", rev = "40cab74beb727e293d1445cd3e9afa98e1ec380b" }
 # The LSP's analysis layer (diagnostics / hover / completion / semantic tokens),
 # without its `tower-lsp` server — builds for wasm32.
-comline-language-server = { git = "https://github.com/ComlineProject/language-server", rev = "91189530cdcb72dacb96eff6e2a67c3f14da8282", default-features = false }
+comline-language-server = { git = "https://github.com/ComlineProject/language-server", rev = "0764367be56f18a6715cf7c385259debdbd9b6d2", default-features = false }
 lsp-types = "0.94"
 rust-sitter = "0.4.5" # parse-error types
 
@@ -26,9 +26,10 @@ wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
-
-[dev-dependencies]
+# `comline_core::compat::PackageFacts` into the generator protocol's mirror,
+# as the CLI converts it.
 serde_json = "1"
+
 
 [profile.release]
 opt-level = "s"

@@ -25,9 +25,10 @@ use std::rc::Rc;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use comline_core::package::config::ir::context::ProjectContext;
 use comline_core::package::config::ir::frozen::FrozenUnit as ConfigUnit;
 use comline_core::package::config::ir::interpreter::ProjectInterpreter;
-use comline_core::schema::idl::annotations::{FramingValue, DEFAULT_FORMAT, DEFAULT_FRAMING};
+use comline_core::schema::idl::annotations::{FramingValue, DEFAULT_FORMAT, IMPLICIT_FRAMING};
 use comline_core::schema::idl::grammar::Declaration;
 use comline_core::schema::ir::compiler::interpreter::incremental::IncrementalInterpreter;
 use comline_core::schema::ir::context::SchemaContext;
@@ -44,6 +45,7 @@ use comline_codegen::versions::LangVersion;
 use comline_codegen::{GenerateRequest, Mode, PackageMeta};
 
 use comline_language_server::analysis::diagnostics::generate_diagnostics;
+use comline_language_server::analysis::source::{apply_package_wire, declared_wire};
 use comline_language_server::handlers::{completion, hover as hover_h, semantic_tokens};
 use comline_language_server::parser;
 use comline_language_server::util::byte_range_to_lsp_range;
@@ -53,7 +55,27 @@ use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, Url};
 /// Minimal package config — enough for `ProjectInterpreter` to hand back a
 /// `ProjectContext` we can push schema contexts onto. Generation targets are
 /// chosen in the UI, not here.
-const CONGREGATION: &str = "congregation playground\nspecification_version = 1\n";
+///
+/// It states no `wire` or `handshake`, so the playground's package takes
+/// core's defaults, `datagram@3` and `comline@2`. `comline@2` identifies a
+/// package by its `id`, which `comline build` writes into a real package's
+/// config.idp; the playground has no disk to write one to, so every
+/// playground package shares this fixed one ([`PACKAGE_ID`]). A fixed id
+/// keeps the generated code the same from one visit to the next.
+const CONGREGATION: &str = concat!(
+    "congregation playground\nid = \"",
+    "706c617967726f756e64000000000000",
+    "\"\nspecification_version = 1\n"
+);
+
+/// The id every playground package has: "playground" in ASCII, as hex,
+/// padded to the 32 hex digits a package id takes. See [`CONGREGATION`].
+pub const PACKAGE_ID: &str = "706c617967726f756e64000000000000";
+
+/// The version a playground package's facts are of: a first version's, as
+/// it has no history. Its numbers are provisional, as a first build's are
+/// until `comline release`.
+const PACKAGE_VERSION: &str = "0.1.0";
 
 /// Schema file extension (`comline-core`'s `SCHEMA_EXTENSION`), stripped when
 /// turning a virtual file name into a namespace.
@@ -123,7 +145,7 @@ pub fn compile_project(files: JsValue) -> JsValue {
             })
         }
     };
-    to_js(&interpret_project(&files).0)
+    to_js(&interpret_project(&files).report)
 }
 
 #[derive(Serialize)]
@@ -469,7 +491,17 @@ fn check_path(path: &str) -> Result<(), &'static str> {
 fn generate_request(files: JsValue, target: &str, mode: &str) -> Result<GenerateRequest, String> {
     let files: Vec<FileInput> =
         serde_wasm_bindgen::from_value(files).map_err(|e| format!("bad file list: {e}"))?;
-    let (_, schemas, declared) = interpret_project(&files);
+    request_for(&files, target, mode)
+}
+
+/// [`generate_request`], over files already read.
+fn request_for(files: &[FileInput], target: &str, mode: &str) -> Result<GenerateRequest, String> {
+    let Interpreted {
+        schemas,
+        declared,
+        context,
+        ..
+    } = interpret_project(files);
     if schemas.is_empty() {
         return Err("no schema parses".to_string());
     }
@@ -484,7 +516,7 @@ fn generate_request(files: JsValue, target: &str, mode: &str) -> Result<Generate
         schemas,
         package: PackageMeta {
             name: "playground".to_string(),
-            version: "0.1.0".to_string(),
+            version: PACKAGE_VERSION.to_string(),
         },
         // The generator's own version, named by the generator rather than
         // restated here.
@@ -505,6 +537,7 @@ fn generate_request(files: JsValue, target: &str, mode: &str) -> Result<Generate
         async_api: false,
         // Filled just below.
         encodings: Default::default(),
+        facts: None,
     };
     comline_codegen::encodings::fill(
         &mut req,
@@ -513,7 +546,26 @@ fn generate_request(files: JsValue, target: &str, mode: &str) -> Result<Generate
         &Default::default(),
     )
     .map_err(|e| format!("{e:#}"))?;
+    // Wire numbers and the rest of `comline@2`'s facts, for a package that
+    // needs them (the default one does). `comline generate` reads them from
+    // the package's history; a playground package has none, so they're a
+    // first version's.
+    if comline_codegen::facts::needed(&req.schemas, &req.encodings) {
+        req.facts = Some(first_facts(&context)?);
+    }
     Ok(req)
+}
+
+/// The facts of the playground's package as its first build would record
+/// them: every line and "since" at [`PACKAGE_VERSION`], numbers in
+/// declaration order. `context` is the one [`interpret_project`] froze.
+fn first_facts(context: &ProjectContext) -> Result<comline_codegen::facts::PackageFacts, String> {
+    let facts = comline_core::compat::facts_of_context(context, PACKAGE_VERSION);
+    // The same fields under the same names: the generator protocol's mirror,
+    // as the CLI converts it.
+    serde_json::to_value(&facts)
+        .and_then(serde_json::from_value)
+        .map_err(|e| format!("the package's facts: {e}"))
 }
 
 /// The shared pipeline behind [`compile_project`] and [`generate_project`]:
@@ -521,17 +573,20 @@ fn generate_request(files: JsValue, target: &str, mode: &str) -> Result<Generate
 /// one with full project context (so `use` across files resolves) and validate
 /// it.
 ///
-/// Returns the per-file reports and, separately, `(namespace-path, units)` for
-/// every file that froze — the shape `comline-codegen` wants.
-fn interpret_project(
-    files: &[FileInput],
-) -> (
-    CompileProjectResult,
-    Vec<(String, Vec<FrozenUnit>)>,
-    Vec<ConfigUnit>,
-) {
+/// The package's framing and handshake (its own, or core's defaults) are
+/// frozen into every protocol that doesn't write one, as `comline build`
+/// does, so the IR, the description and the generated code all show what
+/// the wire runs.
+fn interpret_project(files: &[FileInput]) -> Interpreted {
     let mut context =
         ProjectInterpreter::from_config_source(CONGREGATION).expect("static congregation parses");
+    // Frozen as a build freezes it: its `id` is in the facts.
+    context.config_frozen = Some(
+        comline_core::package::config::ir::interpreter::interpret::interpret_context(
+            &context, None,
+        )
+        .expect("static congregation interprets"),
+    );
     // The encodings the package declares, for `encodings::fill`. The
     // congregation is in memory, so it declares none: core reads an
     // encoding's profile from the package directory.
@@ -552,6 +607,8 @@ fn interpret_project(
     // First pass: parse everything, register the good ones on the context so
     // later files' `use` statements can see them.
     let mut parsed: Vec<Parsed> = Vec::with_capacity(files.len());
+    // Where this package's own schema contexts start.
+    let own_contexts = context.schema_contexts.len();
     for f in files {
         let segments = namespace_segments(&f.path);
         let pr = parser::parse(&f.source).expect("parser never errors internally");
@@ -574,13 +631,50 @@ fn interpret_project(
         });
     }
 
-    // Second pass: interpret + validate each file against the whole context.
+    // Second pass: interpret each file against the whole context.
+    let frozen: Vec<Option<Vec<FrozenUnit>>> = parsed
+        .iter()
+        .map(|p| {
+            let decls = p.decls.clone()?;
+            let mut units = IncrementalInterpreter::from_declarations_with_context(
+                decls,
+                &p.segments,
+                &context,
+            );
+            // Match `comline build`: a leading `Namespace` unit before validation.
+            units.insert(0, FrozenUnit::Namespace(p.segments.join("::")));
+            Some(units)
+        })
+        .collect();
+    // The package's framing and handshake, into every protocol that doesn't
+    // write one: the handshake is one for the package, so all the files at
+    // once.
+    let mut frozen: Vec<(usize, (String, Vec<FrozenUnit>))> = frozen
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, units)| Some((i, (String::new(), units?))))
+        .collect();
+    {
+        let mut all: Vec<(String, Vec<FrozenUnit>)> =
+            frozen.iter_mut().map(|(_, s)| std::mem::take(s)).collect();
+        apply_package_wire(&mut all, &declared_wire(CONGREGATION));
+        for ((_, slot), schema) in frozen.iter_mut().zip(all) {
+            *slot = schema;
+        }
+    }
+    let mut frozen = frozen.into_iter().peekable();
+
+    // Third pass: validate each file, and report it.
     let mut reports = Vec::with_capacity(files.len());
     let mut schemas = Vec::new();
-    for (f, p) in files.iter().zip(parsed) {
+    for (i, (f, p)) in files.iter().zip(parsed).enumerate() {
         let namespace = p.segments.join("::");
 
-        let Some(decls) = p.decls else {
+        let units = match frozen.peek() {
+            Some((at, _)) if *at == i => frozen.next().map(|(_, (_, units))| units),
+            _ => None,
+        };
+        let Some(units) = units else {
             reports.push(FileReport {
                 path: f.path.clone(),
                 namespace,
@@ -591,11 +685,6 @@ fn interpret_project(
             });
             continue;
         };
-
-        let mut units =
-            IncrementalInterpreter::from_declarations_with_context(decls, &p.segments, &context);
-        // Match `comline build`: a leading `Namespace` unit before validation.
-        units.insert(0, FrozenUnit::Namespace(namespace.clone()));
 
         // `validate` reports warnings through its `Ok` arm now - a
         // deprecation, say. Showing those too matches what `comline build`
@@ -628,7 +717,35 @@ fn interpret_project(
         schemas.push((p.segments.join("/"), units));
     }
 
-    (CompileProjectResult { files: reports }, schemas, declared)
+    // Each parsed file's schema context holds what it froze, as a build's
+    // does, for the facts.
+    let mut parsed_contexts = context.schema_contexts[own_contexts..].iter();
+    for (_, units) in &schemas {
+        if let Some(schema) = parsed_contexts.next() {
+            *schema.borrow().frozen_schema.borrow_mut() = Some(units.clone());
+        }
+    }
+
+    Interpreted {
+        report: CompileProjectResult { files: reports },
+        schemas,
+        declared,
+        context,
+    }
+}
+
+/// What [`interpret_project`] makes of the file set.
+struct Interpreted {
+    /// Per file: diagnostics and IR.
+    report: CompileProjectResult,
+    /// `(namespace-path, units)` for every file that froze — the shape
+    /// `comline-codegen` wants.
+    schemas: Vec<(String, Vec<FrozenUnit>)>,
+    /// The encodings the package declares.
+    declared: Vec<ConfigUnit>,
+    /// The package as a build would hold it, each parsed file's schema
+    /// context with its frozen units.
+    context: ProjectContext,
 }
 
 /// `chat.ids` → `["chat"]`, `wire/frame.ids` → `["wire", "frame"]`. Falls back
@@ -696,6 +813,36 @@ fn plain_error(message: String) -> Diagnostic {
 #[derive(Serialize)]
 struct ProjectShape {
     schemas: Vec<SchemaShape>,
+    /// The package's connection, when its protocols run on one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    connection: Option<ConnectionShape>,
+}
+
+/// `comline@2`'s parameters. A struct, not a map, so it crosses into JS as a
+/// plain object.
+#[derive(Serialize)]
+struct Comline2ParamsShape {
+    scope: String,
+    newer_consumer: String,
+    same_version_differs: String,
+    exchange: String,
+}
+
+/// The package's connection: what every protocol on it shares.
+#[derive(Serialize)]
+struct ConnectionShape {
+    /// Canonical: `datagram@3`, `datagram@2`, ...
+    framing: String,
+    /// Canonical: `comline@2`, `comline@1` or `none`.
+    handshake: String,
+    /// `comline@2`'s four parameters, each as written or its default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<Comline2ParamsShape>,
+    /// Under `comline@2`: the `Hello` this package's ends send, hex, as the
+    /// generators embed it. Built from the facts of a first version, so its
+    /// numbers and lines are provisional, as a first build's are.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hello: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -716,9 +863,15 @@ struct SchemaShape {
 #[derive(Serialize)]
 struct ProtocolShape {
     name: String,
-    /// `"datagram"` | `"jsonrpc"` — from the protocol's `@framing`, else the
-    /// datagram default.
+    /// `"datagram"` | `"datagram@2"` | `"datagram@3"` | `"jsonrpc"` — from the
+    /// protocol's `@framing`, else the package's (core's default,
+    /// `datagram@3`).
     framing: String,
+    /// The number its frames carry on the package connection: its wire
+    /// number from the facts under a framing that calls by number, else its
+    /// position in the package.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    number: Option<u16>,
     functions: Vec<FnShape>,
 }
 
@@ -727,6 +880,10 @@ struct FnShape {
     name: String,
     /// 0-based position in the protocol — the `Call` id `resolveKind` matches.
     index: u32,
+    /// What its call carries on the wire: its wire number under a framing
+    /// that calls by number (`datagram@3`), else its position.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call: Option<u16>,
     /// No `_return` at all — a fire-and-forget `notify`, not `Some(Unit)`.
     oneway: bool,
     args: Vec<ArgShape>,
@@ -813,9 +970,17 @@ enum TypeRef {
 pub fn describe_project(files: JsValue) -> JsValue {
     let files: Vec<FileInput> = match serde_wasm_bindgen::from_value(files) {
         Ok(f) => f,
-        Err(_) => return to_js(&ProjectShape { schemas: vec![] }),
+        Err(_) => {
+            return to_js(&ProjectShape {
+                schemas: vec![],
+                connection: None,
+            })
+        }
     };
-    let frozen = interpret_project(&files).1;
+    let frozen = interpret_project(&files).schemas;
+    // The request `comline generate` would build, for the facts and the
+    // connection; `None` while nothing parses.
+    let request = request_for(&files, "rust", "code").ok();
 
     // Struct / enum names across the whole project, so a cross-file type
     // reference still classifies as `ref` (not an opaque scalar).
@@ -830,11 +995,87 @@ pub fn describe_project(files: JsValue) -> JsValue {
         })
         .collect();
 
-    let schemas = frozen
+    let mut schemas: Vec<SchemaShape> = frozen
         .iter()
         .map(|(ns_path, units)| describe_schema(ns_path, units, &known))
         .collect();
-    to_js(&ProjectShape { schemas })
+    let connection = request
+        .as_ref()
+        .and_then(|req| describe_connection(req, &mut schemas));
+    to_js(&ProjectShape {
+        schemas,
+        connection,
+    })
+}
+
+/// The package connection of `req`, and each protocol's and call's numbers
+/// on it in `schemas`, as the generators address them.
+fn describe_connection(
+    req: &GenerateRequest,
+    schemas: &mut [SchemaShape],
+) -> Option<ConnectionShape> {
+    use comline_codegen::connections;
+    use comline_codegen::facts;
+
+    for (ns_path, units) in &req.schemas {
+        let namespace = ns_path.replace('/', "::");
+        for unit in units {
+            let FrozenUnit::Protocol {
+                name,
+                parameters,
+                functions,
+                ..
+            } = unit
+            else {
+                continue;
+            };
+            let Ok(addressing) = facts::addressing(
+                req.facts.as_ref(),
+                &req.schemas,
+                &req.encodings,
+                ns_path,
+                name,
+                parameters,
+                functions,
+            ) else {
+                continue;
+            };
+            let Some(shape) = schemas
+                .iter_mut()
+                .filter(|s| s.namespace == namespace)
+                .flat_map(|s| s.protocols.iter_mut())
+                .find(|p| &p.name == name)
+            else {
+                continue;
+            };
+            shape.number = Some(addressing.protocol);
+            for (f, call) in shape.functions.iter_mut().zip(addressing.calls) {
+                f.call = Some(call);
+            }
+        }
+    }
+
+    let connection = connections::package_connection(&req.schemas).ok()??;
+    let comline2 = connection.handshake == "comline@2";
+    let params = comline2.then(|| {
+        let p = facts::Comline2Params::of(&connection.handshake_value);
+        Comline2ParamsShape {
+            scope: p.scope,
+            newer_consumer: p.newer_consumer,
+            same_version_differs: p.same_version_differs,
+            exchange: p.exchange,
+        }
+    });
+    let hello = comline2
+        .then(|| facts::hello(req, &connection).ok())
+        .flatten()
+        .map(|(bytes, _)| bytes.iter().map(|b| format!("{b:02x}")).collect());
+    Some(ConnectionShape {
+        framing: connection.framing,
+        handshake: connection.handshake,
+        params,
+        hello,
+    })
 }
 
 fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -> SchemaShape {
@@ -893,6 +1134,7 @@ fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -
             } => Some(ProtocolShape {
                 name: name.clone(),
                 framing: framing_of(parameters),
+                number: None,
                 functions: functions
                     .iter()
                     .enumerate()
@@ -923,12 +1165,12 @@ fn describe_schema(ns_path: &str, units: &[FrozenUnit], known: &HashSet<&str>) -
 /// Read through core's `FramingValue`, so `"jsonrpc"` and
 /// `{ name = "jsonrpc", ... }` are the same framing here as everywhere.
 ///
-/// A protocol that names none gets the package's framing, which core has
-/// already written into it when the package declares one, else the
-/// built-in default, `datagram@2`.
+/// The package's framing, or core's default (`datagram@3`), is frozen into
+/// every protocol that names none ([`interpret_project`]); an absent one is
+/// what it has always meant, `datagram@2` (`IMPLICIT_FRAMING`).
 fn framing_of(params: &[FrozenUnit]) -> String {
     FramingValue::of_protocol(params)
-        .map_or(DEFAULT_FRAMING, |f| f.name)
+        .map_or(IMPLICIT_FRAMING, |f| f.name)
         .to_string()
 }
 
@@ -968,6 +1210,7 @@ fn fn_shape(
         } => Some(FnShape {
             name: name.clone(),
             index,
+            call: None,
             oneway: _return.is_none(),
             args: arguments
                 .iter()
@@ -1336,7 +1579,7 @@ mod tests {
             path: "alias.ids".to_string(),
             source: "type Handle = string\n\nstruct Account {\n    owner: Handle\n}\n".to_string(),
         }];
-        let (_, frozen, _) = interpret_project(&files);
+        let frozen = interpret_project(&files).schemas;
         let known: HashSet<&str> = frozen
             .iter()
             .flat_map(|(_, units)| units.iter())
@@ -1370,8 +1613,122 @@ mod tests {
     }
 
     #[test]
-    fn no_framing_is_the_default_datagram2() {
+    fn no_framing_reads_as_the_implicit_datagram2() {
         assert_eq!(framing_of(&[]), "datagram@2");
         assert_eq!(framing_of(&framing_param("datagram@2")), "datagram@2");
+    }
+
+    fn chat() -> Vec<FileInput> {
+        vec![FileInput {
+            path: "chat.ids".to_string(),
+            source: "protocol Chat {\n    function send(text: string) -> bool;\n    function leave();\n}\n\n\
+                     protocol Presence {\n    function ping();\n}\n"
+                .to_string(),
+        }]
+    }
+
+    #[test]
+    fn a_package_taking_the_defaults_runs_datagram3_and_comline2() {
+        let interpreted = interpret_project(&chat());
+        assert!(
+            interpreted.report.files[0].ok,
+            "{:?}",
+            interpreted.report.files[0].diagnostics
+        );
+        let (_, units) = &interpreted.schemas[0];
+        for unit in units {
+            if let FrozenUnit::Protocol {
+                name, parameters, ..
+            } = unit
+            {
+                assert_eq!(framing_of(parameters), "datagram@3", "{name}");
+                assert_eq!(
+                    comline_codegen::connections::handshake_name(parameters),
+                    "comline@2",
+                    "{name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generating_a_default_package_carries_first_version_facts() {
+        for target in ["rust", "typescript"] {
+            let req = request_for(&chat(), target, "code").unwrap();
+            let facts = req.facts.as_ref().expect("the default package needs facts");
+            assert_eq!(facts.id.as_deref(), Some(PACKAGE_ID));
+            assert_eq!(facts.version, PACKAGE_VERSION);
+            let numbers: Vec<(String, u16, Vec<u16>)> = facts
+                .protocols
+                .iter()
+                .map(|p| {
+                    (
+                        p.name.clone(),
+                        p.number,
+                        p.functions.iter().map(|f| f.number).collect(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                numbers,
+                vec![
+                    ("Chat".to_string(), 0, vec![0, 1]),
+                    ("Presence".to_string(), 1, vec![0])
+                ],
+                "{facts:?}"
+            );
+            let generated = match target {
+                "rust" => comline_codegen_rust::generate_rust(&req),
+                _ => comline_codegen_typescript::generate_typescript(&req),
+            };
+            let files = generated.unwrap_or_else(|e| panic!("{target}: {e:#}"));
+            assert!(!files.is_empty(), "{target}");
+        }
+    }
+
+    #[test]
+    fn a_package_off_the_defaults_needs_no_facts() {
+        let files = vec![FileInput {
+            path: "rpc.ids".to_string(),
+            source: "@framing = \"jsonrpc\"\nprotocol Rpc {\n    function ping();\n}\n".to_string(),
+        }];
+        let req = request_for(&files, "rust", "code").unwrap();
+        assert!(req.facts.is_none());
+        comline_codegen_rust::generate_rust(&req).unwrap();
+    }
+
+    #[test]
+    fn the_description_carries_wire_numbers_and_the_comline2_hello() {
+        let req = request_for(&chat(), "rust", "code").unwrap();
+        let frozen = interpret_project(&chat()).schemas;
+        let known = HashSet::new();
+        let mut schemas: Vec<SchemaShape> = frozen
+            .iter()
+            .map(|(ns, units)| describe_schema(ns, units, &known))
+            .collect();
+        let connection = describe_connection(&req, &mut schemas).expect("a package connection");
+        assert_eq!(
+            (connection.framing.as_str(), connection.handshake.as_str()),
+            ("datagram@3", "comline@2")
+        );
+        assert_eq!(connection.params.as_ref().unwrap().exchange, "offer");
+        let hello = connection.hello.expect("a comline@2 hello");
+        assert!(
+            hello.starts_with("434f0201"),
+            "the Hello message's magic, version and type: {hello}"
+        );
+        assert!(hello.contains(PACKAGE_ID), "{hello}");
+
+        let shape = serde_json::to_value(&schemas[0]).unwrap();
+        assert_eq!(shape["protocols"][0]["framing"], "datagram@3");
+        assert_eq!(shape["protocols"][0]["number"], 0);
+        assert_eq!(shape["protocols"][1]["number"], 1);
+        let calls: Vec<_> = shape["protocols"][0]["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["call"].clone())
+            .collect();
+        assert_eq!(calls, vec![serde_json::json!(0), serde_json::json!(1)]);
     }
 }

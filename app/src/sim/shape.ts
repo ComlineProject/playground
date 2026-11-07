@@ -4,6 +4,24 @@
 
 export interface ProjectShape {
   schemas: SchemaShape[];
+  /** The package's connection, when its protocols run on one. */
+  connection?: ConnectionShape;
+}
+
+/** The package connection: what every protocol on it shares. */
+export interface ConnectionShape {
+  /** Canonical: `datagram@3` (core's default), `datagram@2`, ... */
+  framing: string;
+  /** Canonical: `comline@2` (core's default), `comline@1` or `none`. */
+  handshake: string;
+  /** `comline@2`'s four parameters, each as written or its default. */
+  params?: Record<string, string>;
+  /**
+   * Under `comline@2`: the encoded `Hello` each end sends, hex. A playground
+   * package has no history, so its numbers and lines are a first version's:
+   * provisional, as a first build's are until `comline release`.
+   */
+  hello?: string;
 }
 
 export interface SchemaShape {
@@ -19,14 +37,18 @@ export interface SchemaShape {
 
 export interface ProtocolShape {
   name: string;
-  framing: "datagram" | "datagram@2" | "jsonrpc";
+  framing: "datagram" | "datagram@2" | "datagram@3" | "jsonrpc";
+  /** The number its frames carry on the connection (its wire number under `datagram@3`). */
+  number?: number;
   functions: FnShape[];
 }
 
 export interface FnShape {
   name: string;
-  /** 0-based position in the protocol — the `Call` id `resolveKind` matches. */
+  /** 0-based position in the protocol. */
   index: number;
+  /** What its call carries on the wire: its wire number under `datagram@3`, else its position. */
+  call?: number;
   /** No return at all — a fire-and-forget `notify`. */
   oneway: boolean;
   args: ArgShape[];

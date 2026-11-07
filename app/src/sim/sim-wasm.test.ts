@@ -47,10 +47,16 @@ test("the sim wasm instantiates and round-trips a call", () => {
   assert.equal(result.status, "ok");
   assert.deepEqual(result.value, { body: "", seq: 0 }); // default seeded reply = zero value
 
+  // Core's defaults: `datagram@3` and `comline@2`, whose `offer` exchange is
+  // three messages (hello, answer, verdict).
   const frames = JSON.parse(sim.frames(conn));
-  assert.equal(frames.length, 4, "two handshake frames, then request + response");
-  assert.equal(frames[2].kind, "request");
-  assert.equal(frames[3].kind, "response");
+  assert.equal(frames.length, 5, "three comline@2 handshake frames, then request + response");
+  assert.deepEqual(
+    frames.slice(0, 3).map((f: { kind: string }) => f.kind),
+    ["handshake", "handshake", "handshake"],
+  );
+  assert.equal(frames[3].kind, "request");
+  assert.equal(frames[4].kind, "response");
 });
 
 test("a behaviour swap and a shareable link work through the facade", () => {
