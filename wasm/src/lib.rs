@@ -45,7 +45,7 @@ use comline_codegen::versions::LangVersion;
 use comline_codegen::{GenerateRequest, Mode, PackageMeta};
 
 use comline_language_server::analysis::diagnostics::generate_diagnostics;
-use comline_language_server::analysis::source::{apply_package_wire, declared_wire};
+use comline_core::schema::ir::package_wire::apply_package_wire;
 use comline_language_server::handlers::{completion, hover as hover_h, semantic_tokens};
 use comline_language_server::parser;
 use comline_language_server::util::byte_range_to_lsp_range;
@@ -649,18 +649,16 @@ fn interpret_project(files: &[FileInput]) -> Interpreted {
     // The package's framing and handshake, into every protocol that doesn't
     // write one: the handshake is one for the package, so all the files at
     // once.
-    let mut frozen: Vec<(usize, (String, Vec<FrozenUnit>))> = frozen
+    let mut frozen: Vec<(usize, Vec<FrozenUnit>)> = frozen
         .into_iter()
         .enumerate()
-        .filter_map(|(i, units)| Some((i, (String::new(), units?))))
+        .filter_map(|(i, units)| Some((i, units?)))
         .collect();
     {
-        let mut all: Vec<(String, Vec<FrozenUnit>)> =
-            frozen.iter_mut().map(|(_, s)| std::mem::take(s)).collect();
-        apply_package_wire(&mut all, &declared_wire(CONGREGATION));
-        for ((_, slot), schema) in frozen.iter_mut().zip(all) {
-            *slot = schema;
-        }
+        let config = context.config_frozen.as_deref().unwrap_or(&[]);
+        let mut all: Vec<&mut [FrozenUnit]> =
+            frozen.iter_mut().map(|(_, units)| units.as_mut_slice()).collect();
+        apply_package_wire(&mut all, config);
     }
     let mut frozen = frozen.into_iter().peekable();
 
@@ -671,7 +669,7 @@ fn interpret_project(files: &[FileInput]) -> Interpreted {
         let namespace = p.segments.join("::");
 
         let units = match frozen.peek() {
-            Some((at, _)) if *at == i => frozen.next().map(|(_, (_, units))| units),
+            Some((at, _)) if *at == i => frozen.next().map(|(_, units)| units),
             _ => None,
         };
         let Some(units) = units else {
