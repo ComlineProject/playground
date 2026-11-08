@@ -41,6 +41,8 @@ export interface FrameDetail {
   /** Why it faulted, when the simulator knows. */
   note?: string;
   handshake?: { irHash: string; wireFormat: string; framing: string; caps: number };
+  /** A `comline@2` message, as the runtime decodes it. */
+  comline2?: { type: "hello" | "answer" | "verdict"; message: unknown };
 }
 
 export interface LogSource {
@@ -338,6 +340,7 @@ export function frameLog(): FrameLog {
         kv("framing_name", detail.handshake.framing),
       );
     }
+    if (detail.comline2) body.append(json(`comline@2 ${detail.comline2.type}`, detail.comline2.message));
     if (detail.requestId !== undefined) body.append(kv("request_id", detail.requestId));
     if ("params" in detail) body.append(json("params", detail.params));
     if ("ok" in detail) body.append(json("ok", detail.ok));

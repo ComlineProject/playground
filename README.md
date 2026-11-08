@@ -19,7 +19,12 @@ wasm/     comline-playground-wasm — the editor's Rust crate, wasm-bindgen surf
             encode_describe / check_description — the Describe call first,
                                     checked as the CLI checks it (protocol,
                                     IR format, language and version)
-            describe_project(files)        -> the schema shape the sim runs on
+            describe_project(files)        -> the schema shape the sim runs on,
+                                    with wire numbers and the comline@2 Hello
+          The package takes core's defaults (datagram@3, comline@2) and
+          has the fixed id 706c617967726f756e64000000000000; its facts are
+          a first version's (comline_core::compat::facts_of_context), so
+          wire numbers and lines are provisional.
             semantic_tokens / hover / completions   — the LSP handlers verbatim
           deps: comline-core, comline-codegen, comline-codegen-rust,
                 comline-codegen-typescript, comline-language-server (git rev)

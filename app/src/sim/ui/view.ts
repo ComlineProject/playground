@@ -59,7 +59,7 @@ interface ModelConn {
   clientId: string;
   serverId: string;
   faults: Faults;
-  framing: "auto" | "datagram" | "datagram@2" | "jsonrpc";
+  framing: "auto" | "datagram" | "datagram@2" | "datagram@3" | "jsonrpc";
   wireFormat: "packed" | "json" | "msgpack";
 }
 interface Model {
@@ -842,6 +842,7 @@ export function createSim(opts: SimOpts = {}): SimView {
         ["protocol", sel.protocol],
         ["role", sel.role],
         ["framing", found.protocol.framing],
+        ...(shape?.connection ? [["handshake", handshakeLabel(shape.connection)] as [string, string]] : []),
       ]),
     );
     const hash = document.createElement("button");
@@ -1100,7 +1101,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     inspectorEl.append(section("transport"));
     const framingSel = document.createElement("select");
     framingSel.title = "auto follows the protocol's declared framing";
-    for (const v of ["auto", "datagram@2", "datagram", "jsonrpc"] as const) {
+    for (const v of ["auto", "datagram@3", "datagram@2", "datagram", "jsonrpc"] as const) {
       framingSel.append(opt(v, v, v === conn.framing));
     }
     const wireSel = document.createElement("select");
@@ -1127,6 +1128,11 @@ export function createSim(opts: SimOpts = {}): SimView {
     inspectorEl.append(row("framing", framingSel), row("wire format", wireSel));
     if (conn.framing === "auto") {
       inspectorEl.append(muted(`auto → ${resolvedFraming} for this protocol`));
+    }
+    const handshake = shape?.connection;
+    if (handshake) {
+      inspectorEl.append(facts([["handshake", handshakeLabel(handshake)]]));
+      if (handshake.hello) inspectorEl.append(muted(PROVISIONAL));
     }
 
     inspectorEl.append(section("faults"));
@@ -1698,4 +1704,14 @@ function opt(value: string, text: string, selected = false): HTMLOptionElement {
   o.textContent = text;
   if (selected) o.selected = true;
   return o;
+}
+
+/** A playground package has no history: its wire numbers and lines are a first version's. */
+const PROVISIONAL =
+  "wire numbers and lines are a first version's — provisional, as a first build's are until `comline release`";
+
+/** `comline@2 (exchange = offer, ...)`, or the handshake's name alone. */
+function handshakeLabel(c: { handshake: string; params?: Record<string, string> }): string {
+  const params = Object.entries(c.params ?? {});
+  return params.length ? `${c.handshake} (${params.map(([k, v]) => `${k} = ${v}`).join(", ")})` : c.handshake;
 }
