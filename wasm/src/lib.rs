@@ -484,7 +484,7 @@ fn check_path(path: &str) -> Result<(), &'static str> {
 }
 
 /// The request for `target` and `mode` over the whole file set, with its
-/// encodings filled the way `comline generate` fills them: the official
+/// encodings filled the way `comline generation` fills them: the official
 /// mappings, then what the playground's package declares (nothing: its
 /// packages are in memory, and core refuses `encodings` there), with no
 /// `comline.toml` overrides.
@@ -547,7 +547,7 @@ fn request_for(files: &[FileInput], target: &str, mode: &str) -> Result<Generate
     )
     .map_err(|e| format!("{e:#}"))?;
     // Wire numbers and the rest of `comline@2`'s facts, for a package that
-    // needs them (the default one does). `comline generate` reads them from
+    // needs them (the default one does). `comline generation` reads them from
     // the package's history; a playground package has none, so they're a
     // first version's.
     if comline_codegen::facts::needed(&req.schemas, &req.encodings) {
@@ -976,7 +976,7 @@ pub fn describe_project(files: JsValue) -> JsValue {
         }
     };
     let frozen = interpret_project(&files).schemas;
-    // The request `comline generate` would build, for the facts and the
+    // The request `comline generation` would build, for the facts and the
     // connection; `None` while nothing parses.
     let request = request_for(&files, "rust", "code").ok();
 

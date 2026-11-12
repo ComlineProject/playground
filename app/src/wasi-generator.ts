@@ -1,6 +1,6 @@
 /// External generators in the browser: a generator built for `wasm32-wasip1`
 /// (the generator protocol's WASI packaging, core#8), run through a WASI shim
-/// the way `comline generate` runs one under wasmtime (cli `src/external.rs`).
+/// the way `comline generation` runs one under wasmtime (cli `src/external.rs`).
 ///
 /// A generator is untrusted code, so each call runs as the CLI runs it:
 ///
