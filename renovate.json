@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>ComlineProject/.github:renovate-config"
+  ],
+  "packageRules": [
+    {
+      "description": [
+        "Cross-repo git pins (the simulator, the examples) are bumped by hand, like the Cargo `rev =` pins the preset already leaves alone"
+      ],
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDatasources": [
+        "git-refs",
+        "git-tags"
+      ],
+      "enabled": false
+    },
+    {
+      "description": [
+        "Yarn refuses versions younger than its npmMinimalAgeGate (one day by default); do not propose them before then"
+      ],
+      "matchManagers": [
+        "npm"
+      ],
+      "minimumReleaseAge": "3 days"
+    }
+  ]
+}
