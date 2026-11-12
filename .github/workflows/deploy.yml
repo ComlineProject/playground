@@ -8,49 +8,56 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# A newer push to the same pull request supersedes this run; a branch's runs
+# queue instead, so a deploy that is already running is never cancelled.
 concurrency:
-  # per-ref, so a push to one branch doesn't cancel another branch's / master's run
-  group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Container jobs default to `sh`; the steps are bash.
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  # Everything up to the site runs on pull requests too, so a pull request
+  # shows the build works. Only the artifact upload and the deploy job below
+  # are gated to master.
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The wasm CI image: Rust stable 1.99.1 with both wasm32 targets,
+    # wasm-bindgen 0.2.127 (the version `comline-simulator`'s prepare script
+    # asks for, so it installs nothing), wasm-pack and binaryen (wasm-opt).
+    container: ghcr.io/comlineproject/ci-wasm@sha256:74efbad4c8b06d554d28e8a1e486f12ae5b6b4bd15a15db21a0925e020caa40a
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # The runner ships a current stable toolchain — just add the wasm target.
-      - name: Rust target
-        run: rustup target add wasm32-unknown-unknown wasm32-wasip1
-
-      # Editor wasm crate + anything the sim git-dep's `prepack` compiles on a
-      # cache miss (registry crates, the pinned wasm-bindgen-cli in ~/.cargo/bin).
+      # The registry and git checkouts (the editor crate's, the sim's build on
+      # a yarn cache miss) and the editor crate's target directory. The
+      # toolchain and its binaries live in the image, not in the cache.
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
             wasm/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'fixtures/generators/Cargo.toml', 'app/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'fixtures/generators/Cargo.toml', 'app/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-
 
       # Yarn Berry's global cache holds the *built* `comline-simulator` archive
       # (post-`prepack`). A hit here means `yarn install` skips the Rust build
-      # entirely — it only re-runs when `app/yarn.lock` changes (a sim bump).
+      # entirely: it only re-runs when `app/yarn.lock` changes (a sim bump).
       - name: Cache yarn
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.yarn/berry/cache
-          key: ${{ runner.os }}-yarn-${{ hashFiles('app/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-yarn-
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          key: ${{ runner.os }}-${{ runner.arch }}-yarn-${{ hashFiles('app/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-yarn-
 
       - name: Build editor WASM
         run: wasm-pack build wasm --release --target web --out-dir ../app/src/wasm --out-name comline_playground_wasm
@@ -80,13 +87,19 @@ jobs:
           echo "HOSTILE_GENERATOR_WASM=$PWD/wasm/target/fixtures/wasm32-wasip1/release/hostile.wasm" >> "$GITHUB_ENV"
 
       - name: Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 22.23.5
+
+      # `app/.yarnrc.yml` points `yarnPath` at the committed Yarn release;
+      # corepack provides the `yarn` command that hands over to it.
+      - name: Yarn
+        run: corepack enable
 
       # `yarn install` pulls `comline-simulator` as a git dependency and builds
-      # its WASM in `prepack` (lean `pkg/` + scripted `pkg-script/`) — unless the
-      # yarn cache above already has it. Runner has cargo + wasm-opt.
+      # its WASM in `prepack` (lean `pkg/` + scripted `pkg-script/`), unless the
+      # yarn cache above already has it. The image has cargo, wasm-bindgen and
+      # wasm-opt. Yarn's `npmMinimalAgeGate` (its default, one day) stays on.
       - name: Install
         working-directory: app
         run: yarn install
@@ -99,18 +112,26 @@ jobs:
         working-directory: app
         run: yarn build
 
-      - if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: app/dist
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
