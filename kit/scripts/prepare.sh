@@ -16,8 +16,11 @@ if [ "${COMLINE_KIT_EDITOR:-1}" = "0" ]; then
 	exit 0
 fi
 
+# wasm-pack writes a `.gitignore` of `*` into its output, and `yarn pack`
+# honours it, which would leave the built editor out of the package.
 if [ -f pkg-editor/comline_playground_wasm.js ] && [ pkg-editor/comline_playground_wasm.js -nt ../wasm/Cargo.toml ]; then
 	echo "comline-web-kit: pkg-editor/ is already built, skipping" >&2
+	rm -f pkg-editor/.gitignore
 	exit 0
 fi
 
@@ -32,3 +35,4 @@ done
 
 rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 wasm-pack build ../wasm --release --target web --out-dir ../kit/pkg-editor --out-name comline_playground_wasm
+rm -f pkg-editor/.gitignore
