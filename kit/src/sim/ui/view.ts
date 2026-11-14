@@ -219,7 +219,8 @@ export function createSim(opts: SimOpts = {}): SimView {
     flog.el,
   );
 
-  const onResize = () => drawWires();
+  // a lesson re-fits its scene to the new width; a sandbox only redraws wires
+  const onResize = () => (lesson ? renderCanvas() : drawWires());
   window.addEventListener("resize", onResize);
 
   // ── inspector resize grip ────────────────────────────────────────────
@@ -410,22 +411,53 @@ export function createSim(opts: SimOpts = {}): SimView {
   function renderCanvas() {
     for (const g of [...canvasEl.querySelectorAll(".sim-node-group")]) g.remove();
     if (!model) return;
+    lessonFit = lesson ? fitScene(model.nodes) : null;
+    // not laid out yet (the page hasn't attached the view): fit once it is
+    if (lesson && !lessonFit && model.nodes.length && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        if (canvasEl.clientWidth) renderCanvas();
+      });
+    }
     for (const nd of model.nodes) canvasEl.append(groupCard(nd));
     dropHint.hidden = lesson || model.nodes.length > 0;
     // A lesson's canvas isn't a grid cell that fills the view, so it grows to
-    // hold the scene's boxes (placed absolutely, at the session's positions).
+    // hold the scene's boxes (placed absolutely).
     if (lesson) {
-      const bottom = Math.max(0, ...model.nodes.map((n) => n.y + 64 * n.instanceIds.length));
-      canvasEl.style.minHeight = `${bottom + 40}px`;
+      const bottom = Math.max(0, ...model.nodes.map((n) => at(n).y + 64 * n.instanceIds.length));
+      canvasEl.style.minHeight = `${bottom + 24}px`;
     }
     drawWires();
+  }
+
+  // A lesson's scene comes from a session link, placed for some other width.
+  // `fitScene` maps it onto this canvas: the boxes keep their order and rows,
+  // horizontal gaps shrink when the scene is wider than the canvas, and the
+  // whole is centred. Without a laid-out canvas (width 0), positions stay.
+  const BOX_W = 156;
+  const FIT_MARGIN = 16;
+  let lessonFit: ((nd: ModelNode) => { x: number; y: number }) | null = null;
+  const at = (nd: ModelNode) => (lessonFit ? lessonFit(nd) : { x: nd.x, y: nd.y });
+  function fitScene(nodes: ModelNode[]): ((nd: ModelNode) => { x: number; y: number }) | null {
+    const width = canvasEl.clientWidth;
+    if (!width || nodes.length === 0) return null;
+    const minX = Math.min(...nodes.map((n) => n.x));
+    const minY = Math.min(...nodes.map((n) => n.y));
+    const span = Math.max(...nodes.map((n) => n.x)) - minX;
+    const room = Math.max(0, width - 2 * FIT_MARGIN - BOX_W);
+    const scale = span > room ? room / span : 1;
+    const left = Math.max(FIT_MARGIN, (width - (span * scale + BOX_W)) / 2);
+    return (nd) => ({
+      x: Math.round(left + (nd.x - minX) * scale),
+      y: Math.round(FIT_MARGIN + nd.y - minY),
+    });
   }
 
   function groupCard(nd: ModelNode): HTMLElement {
     const g = div("sim-node-group");
     g.dataset.nodeId = nd.id;
-    g.style.left = `${nd.x}px`;
-    g.style.top = `${nd.y}px`;
+    const pos = at(nd);
+    g.style.left = `${pos.x}px`;
+    g.style.top = `${pos.y}px`;
     if (nd.id === selectedNodeId) g.classList.add("selected");
 
     const cap = div("group-cap mono");
