@@ -15,6 +15,7 @@ import {
   type LspPosition,
 } from "comline-web-kit/editor";
 import { createSim, loadSim, type SimView } from "comline-web-kit/sim";
+import { loadScripted } from "comline-web-kit/sim/scripted";
 import "comline-web-kit/sim.css";
 import examplesData from "comline-examples";
 
@@ -692,7 +693,7 @@ async function enterSimulate() {
   await loadSim(); // idempotent
   const shape = await compiler.describeProject(project());
   if (!sim) {
-    sim = createSim();
+    sim = createSim({ loadScripted });
     simEl.append(sim.el);
   }
   // A `#s=…` fragment restores a shared topology, but only on the first entry.

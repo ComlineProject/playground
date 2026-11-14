@@ -1177,6 +1177,21 @@ const loadScripted = async () => {
   return { Sim: m.Sim };
 };
 
+test("2f — without a scripted engine to load, `script` isn't offered", () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server } = place(sim);
+
+  fire(server, "click");
+  const kinds = [
+    ...(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement).options,
+  ].map((o) => o.value);
+  assert.ok(kinds.includes("reply") && kinds.includes("echo"), "the other behaviours are offered");
+  assert.ok(!kinds.includes("script"), "`script` needs a loader");
+  sim.destroy();
+});
+
 test(
   "2f — picking `script` pulls the scripted wasm and runs a Rhai reply",
   { skip: existsSync(scriptedWasm) ? false : "set COMLINE_SIMULATOR_SCRIPT=1 and reinstall" },

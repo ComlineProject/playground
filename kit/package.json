@@ -12,6 +12,7 @@
   "type": "module",
   "exports": {
     "./sim": "./src/sim/index.ts",
+    "./sim/scripted": "./src/sim/scripted.ts",
     "./sim.css": "./src/sim/sim.css",
     "./editor": "./src/editor/index.ts",
     "./editor-wasm": "./pkg-editor/comline_playground_wasm.js",

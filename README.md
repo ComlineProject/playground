@@ -36,6 +36,9 @@ kit/      comline-web-kit — what the playground shares with the tutorial and
                                      Worker that runs that WASM
             comline-web-kit/sim      the **simulate** view: a canvas /
                                      inspector / frame log over the sim WASM
+            comline-web-kit/sim/scripted  the Rhai engine's loader, passed to
+                                     `createSim` to offer the `script`
+                                     behaviour
             comline-web-kit/sim.css  its styles, scoped under `.cl-sim` and
                                      themed with `--cl-*` properties
           The sim engine is the `comline-simulator` git dependency
