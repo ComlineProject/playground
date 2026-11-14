@@ -13,9 +13,9 @@ import init, {
   semantic_tokens,
   hover,
   completions,
-} from "./wasm/comline_playground_wasm.js";
+} from "../../pkg-editor/comline_playground_wasm.js";
 
-export type { ProjectShape } from "./sim/shape.ts";
+export type { ProjectShape } from "../sim/shape.ts";
 
 // ── result shapes (a thin slice of lsp-types) ─────────────────────────────
 export interface LspPosition {

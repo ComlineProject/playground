@@ -12,6 +12,8 @@
 /// `sim.call()` + advancing the clock + polling `sim.result()`; the frame log
 /// polls `sim.frames()`.
 
+/// <reference path="../sim-wasm-script.d.ts" />
+
 import { findProtocol, type FnShape, type ProjectShape, type ThrowShape } from "../shape.ts";
 import { Sim } from "comline-simulator";
 import { argsForm } from "./argsform.ts";
@@ -181,7 +183,7 @@ export function createSim(opts: SimOpts = {}): SimView {
   const sessionHasScript = () =>
     !!model?.instances.some((i) => Object.values(i.behaviors).some((b) => b.kind === "script"));
 
-  const el = div("sim");
+  const el = div("cl-sim sim");
   const paletteEl = div("sim-col sim-palette");
   const canvasEl = div("sim-col sim-canvas");
   const inspectorEl = div("sim-col sim-inspector");

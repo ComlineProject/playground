@@ -1,0 +1,923 @@
+/* The simulate view (comline-web-kit/sim), scoped under .cl-sim. */
+
+/* Colours and font: set the --cl-* properties on .cl-sim or an ancestor to
+   theme it. The defaults are the playground's. */
+.cl-sim {
+  --bg: var(--cl-bg, #1e1e28);
+  --bg-2: var(--cl-bg-2, #262633);
+  --fg: var(--cl-fg, #e4e4ef);
+  --muted: var(--cl-muted, #9a9ab0);
+  --accent: var(--cl-accent, #7aa2f7);
+  --ok: var(--cl-ok, #9ece6a);
+  --err: var(--cl-err, #f7768e);
+  --warn: var(--cl-warn, #e0af68);
+  --border: var(--cl-border, #34344a);
+  font-family: var(--cl-font, ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace);
+  color: var(--fg);
+  box-sizing: border-box;
+}
+.cl-sim *,
+.cl-sim *::before,
+.cl-sim *::after {
+  box-sizing: inherit;
+}
+
+/* general utilities the view uses */
+.cl-sim .is-hidden {
+  display: none !important;
+}
+.cl-sim .empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.cl-sim .icon-btn {
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.4rem;
+  cursor: pointer;
+}
+.cl-sim .icon-btn:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+.cl-sim .ok {
+  color: var(--ok);
+}
+.cl-sim .err {
+  color: var(--err);
+}
+.cl-sim .muted {
+  color: var(--muted);
+}
+.cl-sim .pad {
+  padding: 0.5rem 0.7rem;
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.cl-sim {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 190px 1fr 320px;
+  grid-template-rows: 1fr 230px;
+  grid-template-areas:
+    "palette canvas    inspector"
+    "frames  frames     inspector";
+}
+.cl-sim .sim-col {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.cl-sim .sim-palette {
+  grid-area: palette;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 0.4rem;
+}
+.cl-sim .sim-canvas {
+  grid-area: canvas;
+  position: relative;
+  padding: 1.2rem;
+  overflow: auto;
+  touch-action: none;
+}
+.cl-sim .canvas-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+/* `display: flex` above outranks the UA `[hidden]` rule — restore it */
+.cl-sim .canvas-hint[hidden] {
+  display: none;
+}
+/* the inspector column: a left-edge drag grip + the scrolling pane */
+.cl-sim .sim-inspector-wrap {
+  grid-area: inspector;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-2);
+}
+.cl-sim .sim-inspector-grip {
+  flex: 0 0 6px;
+  cursor: ew-resize;
+  background: var(--border);
+  touch-action: none;
+}
+.cl-sim .sim-inspector-grip:hover {
+  background: var(--muted);
+}
+.cl-sim .sim-inspector {
+  flex: 1;
+  min-width: 0;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.78rem;
+}
+.cl-sim .sim-frames {
+  grid-area: frames;
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.cl-sim .sim-frames-grip {
+  flex: 0 0 6px;
+  cursor: ns-resize;
+  background: var(--border);
+  touch-action: none;
+}
+.cl-sim .sim-frames-grip:hover {
+  background: var(--muted);
+}
+/* palette */
+.cl-sim .palette-group {
+  margin-bottom: 0.8rem;
+}
+.cl-sim .palette-proto {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+.cl-sim .palette-chip {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  cursor: grab;
+  user-select: none;
+}
+.cl-sim .palette-chip.role-server {
+  border-left: 3px solid var(--accent);
+}
+.cl-sim .palette-chip.role-client {
+  border-left: 3px solid var(--ok);
+}
+/* canvas */
+.cl-sim .sim-wire {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.cl-sim .sim-wire line {
+  stroke-width: 2;
+}
+.cl-sim .sim-wire .wire-live {
+  stroke: var(--ok);
+}
+.cl-sim .sim-wire .wire-pending {
+  stroke: var(--muted);
+  stroke-dasharray: 5 4;
+}
+.cl-sim .sim-wire .wire-faulty {
+  stroke: var(--warn);
+  stroke-dasharray: 6 4;
+}
+.cl-sim .sim-wire .wire-drag {
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+}
+.cl-sim .sim-wire .wire-hit {
+  stroke: transparent;
+  stroke-width: 12;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.cl-sim .sim-wire .wire-selected {
+  stroke-width: 3.5;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+/* the box on the canvas — one or more instance rows */
+.cl-sim .sim-node-group {
+  position: absolute;
+  width: 156px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.cl-sim .sim-node-group:active {
+  cursor: grabbing;
+}
+.cl-sim .sim-node-group.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+.cl-sim .sim-node-group.selected {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.cl-sim .sim-node-group.selected > .group-cap {
+  color: var(--accent);
+}
+.cl-sim .group-cap {
+  padding: 0.28rem 0.6rem 0.24rem;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.cl-sim .group-rename {
+  width: 100%;
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 0.2rem;
+}
+/* one instance inside the box */
+.cl-sim .sim-node {
+  position: relative;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.cl-sim .sim-node + .sim-node {
+  border-top: 1px solid var(--border);
+}
+.cl-sim .sim-node.role-server {
+  border-left-color: var(--accent);
+}
+.cl-sim .sim-node.role-client {
+  border-left-color: var(--ok);
+}
+.cl-sim .sim-node.selected {
+  background: #ffffff0d;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.cl-sim .sim-node.wired .node-name::after {
+  content: " ●";
+  color: var(--ok);
+  font-size: 0.6rem;
+  vertical-align: middle;
+}
+.cl-sim .node-name {
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+.cl-sim .node-sub {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.cl-sim .node-port {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-2);
+  cursor: crosshair;
+}
+.cl-sim .node-port:hover {
+  transform: translateY(-50%) scale(1.25);
+}
+/* inspector */
+.cl-sim .insp-section {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin: 0.9rem 0 0.4rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+/* the first section heads the panel — no divider above nothing */
+.cl-sim .sim-inspector > .insp-section:first-child,
+.cl-sim .insp-tabpanel > .insp-section:first-child {
+  margin-top: 0.1rem;
+  border-top: none;
+  padding-top: 0;
+}
+/* instance-inspector tabs — Instance · Connections · Behaviours · Call */
+.cl-sim .insp-tabs {
+  display: flex;
+  gap: 0.15rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.7rem;
+}
+.cl-sim .insp-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0.32rem 0.5rem;
+  font: inherit;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: pointer;
+}
+.cl-sim .insp-tab:hover {
+  color: var(--fg);
+}
+.cl-sim .insp-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+.cl-sim .insp-facts {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+.cl-sim .fact {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.cl-sim .insp-label {
+  color: var(--muted);
+}
+.cl-sim .fact-v {
+  color: var(--fg);
+}
+.cl-sim .insp-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+}
+.cl-sim .conn-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.2rem 0;
+}
+.cl-sim .conn-dot {
+  color: var(--muted);
+  font-size: 0.7rem;
+  vertical-align: middle;
+}
+.cl-sim .conn-dot.ok {
+  color: var(--ok);
+}
+.cl-sim .conn-dot.err {
+  color: var(--err);
+}
+.cl-sim .conn-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.1rem 0;
+}
+.cl-sim .conn-name:hover {
+  color: var(--accent);
+}
+.cl-sim .conn-x {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.cl-sim .conn-x:hover {
+  color: var(--err);
+}
+.cl-sim .insp-row select,
+.cl-sim .insp-row .hash-copy {
+  flex: 1;
+  min-width: 0;
+}
+.cl-sim .hash-copy {
+  font-size: 0.72rem;
+  text-align: left;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cl-sim .sim-inspector select,
+.cl-sim .sim-inspector textarea {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+}
+.cl-sim .sim-inspector textarea {
+  width: 100%;
+  resize: vertical;
+}
+.cl-sim .sim-btn {
+  font: inherit;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.25rem 0.6rem;
+  margin-top: 0.4rem;
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--fg);
+}
+.cl-sim .sim-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.cl-sim .sim-btn.danger {
+  border-color: var(--err);
+  color: var(--err);
+}
+.cl-sim .behavior-row {
+  margin: 0.4rem 0;
+}
+.cl-sim .behavior-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.cl-sim .behavior-fn {
+  flex: 0 0 4.5rem;
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+.cl-sim .behavior-kind {
+  flex: 1;
+}
+.cl-sim .behavior-config {
+  margin-top: 0.25rem;
+  font-size: 0.72rem !important;
+}
+.cl-sim .behavior-config.bad {
+  border-color: var(--err);
+}
+.cl-sim .forward-cfg {
+  margin-top: 0.3rem;
+  display: grid;
+  gap: 0.25rem;
+}
+.cl-sim .forward-cfg select {
+  width: 100%;
+}
+.cl-sim .call-args {
+  margin: 0.4rem 0;
+}
+.cl-sim .call-out {
+  white-space: pre-wrap;
+  font-size: 0.72rem;
+  margin-top: 0.4rem;
+  max-height: 8rem;
+  overflow: auto;
+}
+.cl-sim .call-fn-name {
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+.cl-sim .call-btns {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+/* 2g — the compare-across-framings result: a verdict line + a small table */
+.cl-sim .compare-out:empty {
+  display: none;
+}
+.cl-sim .compare-note {
+  margin: 0.6rem 0 0.3rem;
+  font-size: 0.72rem;
+}
+.cl-sim .compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+  margin-bottom: 0.3rem;
+}
+.cl-sim .compare-table th,
+.cl-sim .compare-table td {
+  padding: 0.2rem 0.4rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.cl-sim .compare-table th {
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: uppercase;
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+}
+.cl-sim .compare-table td:nth-child(2) {
+  text-align: right;
+  color: var(--muted);
+}
+.cl-sim .compare-table tr.mismatch td {
+  color: var(--err);
+}
+/* a short, centred rule between repeated blocks (call fns, behaviour rows) */
+.cl-sim .insp-sep {
+  width: 45%;
+  height: 0;
+  margin: 0.9rem auto;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+/* args form */
+.cl-sim .arg-row {
+  margin: 0.3rem 0;
+}
+.cl-sim .arg-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 0.15rem;
+}
+.cl-sim .arg-type {
+  color: var(--accent);
+}
+.cl-sim .arg-input {
+  width: 100%;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+}
+.cl-sim .arg-struct {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.3rem 0.5rem;
+  margin: 0;
+}
+.cl-sim .args-raw-toggle {
+  font-size: 0.7rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.3rem;
+}
+.cl-sim .args-json {
+  width: 100%;
+}
+.cl-sim .mono {
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+}
+/* ── frame inspector (1e) ─────────────────────────────────────────────── */
+.cl-sim .sim-frames-list {
+  flex: 1;
+  overflow: auto;
+  padding-bottom: 0.4rem;
+  font-size: 0.72rem;
+}
+.cl-sim .sim-frames-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+.cl-sim .sim-frames-head .icon-btn {
+  font-size: 0.68rem;
+  margin-left: auto;
+}
+.cl-sim .frame-filters {
+  display: flex;
+  gap: 0.3rem;
+}
+.cl-sim .frame-filter {
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  cursor: pointer;
+  opacity: 0.45;
+}
+.cl-sim .frame-filter.on {
+  opacity: 1;
+  color: var(--fg);
+  border-color: var(--accent);
+}
+/* clock / seed strip in the frames header */
+.cl-sim .clock-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-left: 0.4rem;
+  border-left: 1px solid var(--border);
+}
+.cl-sim .clock-bar select,
+.cl-sim .clock-bar input {
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.2rem;
+}
+.cl-sim .clock-seed {
+  width: 3rem;
+}
+.cl-sim .clock-btn {
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  cursor: pointer;
+}
+.cl-sim .clock-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.cl-sim .clock-btn.recording {
+  color: var(--err);
+  border-color: var(--err);
+}
+.cl-sim label.clock-btn {
+  cursor: pointer;
+}
+.cl-sim .clock-queued {
+  font-size: 0.6rem;
+  color: var(--warn);
+  white-space: nowrap;
+}
+.cl-sim .sim-wire .wire-refused {
+  stroke: var(--err);
+  stroke-dasharray: 3 3;
+}
+/* the frame log is a real <table>: fixed layout keeps the columns aligned,
+   the <thead> sticks while the <tbody> rows scroll. */
+.cl-sim .sim-frames-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.72rem;
+}
+.cl-sim .sim-frames-table th,
+.cl-sim .sim-frames-table td {
+  padding: 0.22rem 0.5rem;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+}
+.cl-sim .sim-frames-table th:last-child,
+.cl-sim .sim-frames-table td:last-child {
+  border-right: none;
+}
+.cl-sim .sim-frames-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 400;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: var(--bg-2);
+  /* a real border-bottom doesn't stick with border-collapse — paint it */
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+.cl-sim tbody.frame-row {
+  border-bottom: 1px solid var(--border);
+}
+.cl-sim tbody.frame-row > tr.frame-summary {
+  cursor: pointer;
+}
+.cl-sim tbody.frame-row > tr.frame-summary:hover {
+  background: #ffffff08;
+}
+.cl-sim tbody.frame-row > tr.frame-detail > td {
+  padding: 0;
+}
+.cl-sim .frame-conn {
+  color: var(--accent);
+  opacity: 0.85;
+}
+.cl-sim .conn-filters {
+  border-left: 1px solid var(--border);
+  padding-left: 0.4rem;
+}
+.cl-sim .frame-row .frame-seq {
+  color: var(--muted);
+}
+.cl-sim .frame-row .frame-kind {
+  color: var(--accent);
+}
+.cl-sim .frame-row .frame-fn {
+  color: var(--fg);
+}
+.cl-sim .frame-row .frame-delta,
+.cl-sim .frame-row .frame-len {
+  color: var(--muted);
+}
+.cl-sim .frame-delta,
+.cl-sim .frame-len {
+  text-align: right;
+}
+.cl-sim .frame-handshake .frame-kind,
+.cl-sim .frame-unknown .frame-kind {
+  color: var(--muted);
+}
+.cl-sim .frame-refused td {
+  padding: 0.3rem 0.4rem;
+  color: var(--err);
+}
+.cl-sim .frame-faulted .frame-kind {
+  color: var(--warn);
+}
+.cl-sim .frame-dropped {
+  opacity: 0.45;
+}
+.cl-sim .frame-fault-reply .frame-fn {
+  color: var(--err);
+}
+.cl-sim .frame-dropped .frame-kind {
+  color: var(--err);
+  text-decoration: line-through;
+}
+/* per-connection fault controls */
+.cl-sim .fault-ctls {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.4rem;
+}
+.cl-sim .fault-ctls input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--warn);
+}
+.cl-sim .fault-ctls input[type="number"] {
+  width: 4.5rem;
+}
+.cl-sim .fault-val {
+  flex: 0 0 2.6rem;
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.cl-sim tbody.frame-idle > tr > td {
+  padding: 0;
+}
+.cl-sim .frame-idle-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.62rem;
+  color: var(--muted);
+  opacity: 0.75;
+}
+.cl-sim .frame-idle-line::before,
+.cl-sim .frame-idle-line::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--border);
+}
+.cl-sim .frame-body {
+  padding: 0.3rem 0.6rem 0.5rem;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.cl-sim .frame-kv {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0.15rem 0;
+}
+.cl-sim .frame-k {
+  flex: 0 0 6rem;
+  color: var(--muted);
+}
+.cl-sim .frame-json {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--fg);
+  max-height: 8rem;
+  overflow: auto;
+}
+.cl-sim .frame-raw-btns {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+.cl-sim .bytes-toggle {
+  font: inherit;
+  font-size: 0.68rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  cursor: pointer;
+}
+.cl-sim .bytes-toggle.on {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+.cl-sim .frame-bytes {
+  margin: 0.3rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.cl-sim .sim-inspector input[type="number"] {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  width: 5rem;
+}
+.cl-sim .box-name {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+}
+/* the box inspector's instance list — role-tinted like the canvas chips */
+.cl-sim .box-inst {
+  border-left: 3px solid transparent;
+  padding-left: 0.4rem;
+}
+.cl-sim .box-inst.role-server {
+  border-left-color: var(--accent);
+}
+.cl-sim .box-inst.role-client {
+  border-left-color: var(--ok);
+}
+/* "▸ in box MACHINE 2" — jumps the inspector up to the box */
+.cl-sim .insp-crumb {
+  display: block;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.cl-sim .insp-crumb:hover {
+  color: var(--accent);
+}

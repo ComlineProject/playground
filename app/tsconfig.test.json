@@ -7,7 +7,6 @@
     "noEmit": true
   },
   "include": [
-    "src/sim",
     "src/examples.test.ts",
     "src/wasi-generator.ts",
     "src/wasi-generator.test.ts",

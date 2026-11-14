@@ -46,21 +46,23 @@ jobs:
             /usr/local/cargo/registry
             /usr/local/cargo/git
             wasm/target
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'fixtures/generators/Cargo.toml', 'app/yarn.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('wasm/Cargo.toml', 'fixtures/generators/Cargo.toml', 'yarn.lock') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-
 
       # Yarn Berry's global cache holds the *built* `comline-simulator` archive
       # (post-`prepack`). A hit here means `yarn install` skips the Rust build
-      # entirely: it only re-runs when `app/yarn.lock` changes (a sim bump).
+      # entirely: it only re-runs when `yarn.lock` changes (a sim bump).
       - name: Cache yarn
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.yarn/berry/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-yarn-${{ hashFiles('app/yarn.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-yarn-${{ hashFiles('yarn.lock') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-yarn-
 
+      # Into the kit (kit/pkg-editor), which the app and the kit's tests
+      # import it from.
       - name: Build editor WASM
-        run: wasm-pack build wasm --release --target web --out-dir ../app/src/wasm --out-name comline_playground_wasm
+        run: wasm-pack build wasm --release --target web --out-dir ../kit/pkg-editor --out-name comline_playground_wasm
 
       - name: Test editor crate
         run: cargo test --manifest-path wasm/Cargo.toml
@@ -91,25 +93,25 @@ jobs:
         with:
           node-version: 22.23.5
 
-      # `app/.yarnrc.yml` points `yarnPath` at the committed Yarn release;
+      # `.yarnrc.yml` points `yarnPath` at the committed Yarn release;
       # corepack provides the `yarn` command that hands over to it.
       - name: Yarn
         run: corepack enable
 
-      # `yarn install` pulls `comline-simulator` as a git dependency and builds
-      # its WASM in `prepack` (lean `pkg/` + scripted `pkg-script/`), unless the
-      # yarn cache above already has it. The image has cargo, wasm-bindgen and
-      # wasm-opt. Yarn's `npmMinimalAgeGate` (its default, one day) stays on.
+      # One install for the workspace (app/ and kit/). It pulls
+      # `comline-simulator`, the kit's git dependency, and builds its WASM in
+      # `prepack` (lean `pkg/` + scripted `pkg-script/`), unless the yarn cache
+      # above already has it. The image has cargo, wasm-bindgen and wasm-opt.
+      # Yarn's `npmMinimalAgeGate` (its default, one day) stays on.
       - name: Install
-        working-directory: app
         run: yarn install
 
-      - name: Test (simulate view)
-        working-directory: app
+      # The kit's tests (the simulate view, the shape), then the app's
+      # (examples, the WASI generator runner).
+      - name: Test
         run: yarn test
 
       - name: Build site
-        working-directory: app
         run: yarn build
 
       - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'

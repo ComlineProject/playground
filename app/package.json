@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "wasm": "wasm-pack build ../wasm --release --target web --out-dir ../app/src/wasm --out-name comline_playground_wasm",
-    "dev": "yarn wasm && vite",
+    "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "tsc -p tsconfig.test.json && node --import tsx --test \"src/**/*.test.ts\""
@@ -24,7 +23,7 @@
     "@codemirror/view": "^6.34.0",
     "@lezer/highlight": "^1.2.3",
     "comline-examples": "git+https://github.com/ComlineProject/examples.git#f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7",
-    "comline-simulator": "git+https://github.com/ComlineProject/simulator.git#564851a8fa00709cd94db8ce8ab1c4325a691fc4"
+    "comline-web-kit": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
