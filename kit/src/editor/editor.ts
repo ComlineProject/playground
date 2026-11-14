@@ -304,6 +304,10 @@ function hoverInfo(ctx: EditorContext) {
 }
 
 // ── theme ─────────────────────────────────────────────────────────────────
+// Colours come from the page's custom properties: --bg, --bg-2, --fg, --muted
+// and --border for the chrome, and --cl-tok-* (with these defaults, the
+// playground's) for the syntax, so a page can restyle the editor, a light
+// theme included.
 const theme = EditorView.theme(
   {
     "&": { height: "100%", fontSize: "0.85rem", backgroundColor: "var(--bg)", color: "var(--fg)" },
@@ -312,9 +316,9 @@ const theme = EditorView.theme(
       lineHeight: "1.55",
     },
     ".cm-gutters": { backgroundColor: "var(--bg)", color: "var(--muted)", border: "none" },
-    ".cm-activeLine": { backgroundColor: "#ffffff08" },
-    ".cm-activeLineGutter": { backgroundColor: "#ffffff08" },
-    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "#3d59a1" },
+    ".cm-activeLine": { backgroundColor: "var(--cl-active-line, #ffffff08)" },
+    ".cm-activeLineGutter": { backgroundColor: "var(--cl-active-line, #ffffff08)" },
+    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "var(--cl-selection, #3d59a1)" },
     ".cm-cursor": { borderLeftColor: "var(--fg)" },
     ".cm-tooltip": {
       backgroundColor: "var(--bg-2)",
@@ -339,13 +343,13 @@ const theme = EditorView.theme(
       fontStyle: "italic",
       fontSize: "0.85em",
     },
-    ".cm-tok-kw": { color: "#bb9af7" },
-    ".cm-tok-type": { color: "#7dcfff" },
-    ".cm-tok-str": { color: "#9ece6a" },
-    ".cm-tok-comment": { color: "#565f89", fontStyle: "italic" },
-    ".cm-tok-ann": { color: "#e0af68" },
-    ".cm-tok-num": { color: "#ff9e64" },
-    ".cm-tok-var": { color: "#73daca" },
+    ".cm-tok-kw": { color: "var(--cl-tok-kw, #bb9af7)" },
+    ".cm-tok-type": { color: "var(--cl-tok-type, #7dcfff)" },
+    ".cm-tok-str": { color: "var(--cl-tok-str, #9ece6a)" },
+    ".cm-tok-comment": { color: "var(--cl-tok-comment, #565f89)", fontStyle: "italic" },
+    ".cm-tok-ann": { color: "var(--cl-tok-ann, #e0af68)" },
+    ".cm-tok-num": { color: "var(--cl-tok-num, #ff9e64)" },
+    ".cm-tok-var": { color: "var(--cl-tok-var, #73daca)" },
   },
   { dark: true },
 );
@@ -354,18 +358,18 @@ const theme = EditorView.theme(
 // One grammar-agnostic highlight style (Lezer tags → the schema editor's
 // palette), shared by every generated language.
 const generatedHighlightStyle = HighlightStyle.define([
-  { tag: [t.keyword, t.modifier, t.definitionKeyword, t.moduleKeyword, t.controlKeyword, t.operatorKeyword], color: "#bb9af7" },
-  { tag: [t.string, t.special(t.string), t.regexp], color: "#9ece6a" },
-  { tag: [t.comment], color: "#565f89", fontStyle: "italic" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "#ff9e64" },
-  { tag: [t.typeName, t.className, t.namespace], color: "#7dcfff" },
-  { tag: [t.propertyName, t.attributeName], color: "#7aa2f7" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "#7aa2f7" },
-  { tag: [t.operator, t.punctuation, t.bracket, t.separator, t.derefOperator], color: "#9aa5ce" },
-  { tag: [t.meta], color: "#e0af68" },
-  { tag: [t.self], color: "#f7768e" },
-  { tag: [t.variableName], color: "#e4e4ef" },
-  { tag: [t.invalid], color: "#f7768e" },
+  { tag: [t.keyword, t.modifier, t.definitionKeyword, t.moduleKeyword, t.controlKeyword, t.operatorKeyword], color: "var(--cl-tok-kw, #bb9af7)" },
+  { tag: [t.string, t.special(t.string), t.regexp], color: "var(--cl-tok-str, #9ece6a)" },
+  { tag: [t.comment], color: "var(--cl-tok-comment, #565f89)", fontStyle: "italic" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--cl-tok-num, #ff9e64)" },
+  { tag: [t.typeName, t.className, t.namespace], color: "var(--cl-tok-type, #7dcfff)" },
+  { tag: [t.propertyName, t.attributeName], color: "var(--cl-tok-fn, #7aa2f7)" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "var(--cl-tok-fn, #7aa2f7)" },
+  { tag: [t.operator, t.punctuation, t.bracket, t.separator, t.derefOperator], color: "var(--cl-tok-op, #9aa5ce)" },
+  { tag: [t.meta], color: "var(--cl-tok-ann, #e0af68)" },
+  { tag: [t.self], color: "var(--cl-tok-self, #f7768e)" },
+  { tag: [t.variableName], color: "var(--fg)" },
+  { tag: [t.invalid], color: "var(--cl-tok-self, #f7768e)" },
 ]);
 
 const readOnlyTheme = EditorView.theme({
