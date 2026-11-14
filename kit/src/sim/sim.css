@@ -21,6 +21,19 @@
 .cl-sim *::after {
   box-sizing: inherit;
 }
+/* The host page's element styles (a font or padding on every p, a centred
+   main) stop at the view: its own classes style what's inside. */
+.cl-sim {
+  text-align: left;
+}
+.cl-sim p,
+.cl-sim a,
+.cl-sim label,
+.cl-sim span {
+  font-family: inherit;
+  color: inherit;
+  padding: 0;
+}
 
 /* general utilities the view uses */
 .cl-sim .is-hidden {
