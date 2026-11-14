@@ -105,7 +105,14 @@ function storedHeight(): number | null {
   }
 }
 
-export function frameLog(): FrameLog {
+export interface FrameLogOpts {
+  /** A grip that resizes the `.sim` grid's bottom row, and the height kept
+   *  from last time. Default true; off in a layout that isn't that grid. */
+  resizable?: boolean;
+}
+
+export function frameLog(opts: FrameLogOpts = {}): FrameLog {
+  const resizable = opts.resizable ?? true;
   const el = document.createElement("div");
   el.className = "sim-frames";
 
@@ -126,7 +133,7 @@ export function frameLog(): FrameLog {
       /* private mode — just don't persist */
     }
   };
-  const saved = storedHeight();
+  const saved = resizable ? storedHeight() : null;
   if (saved !== null && typeof requestAnimationFrame === "function") {
     const apply = () => (el.closest(".sim") ? applyHeight(saved) : requestAnimationFrame(apply));
     requestAnimationFrame(apply);
@@ -216,7 +223,8 @@ export function frameLog(): FrameLog {
   const list = document.createElement("div");
   list.className = "sim-frames-list";
   list.append(table);
-  el.append(grip, head, list);
+  if (resizable) el.append(grip);
+  el.append(head, list);
 
   let sources: LogSource[] = [];
   let api: FrameSource = { frames: () => [], detail: () => null };

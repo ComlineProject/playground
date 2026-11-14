@@ -1226,3 +1226,104 @@ test(
     sim.destroy();
   },
 );
+
+// ── lesson layout ────────────────────────────────────────────────────
+/** A connected server + client, built in a sandbox and handed over as the
+ *  session link a lesson starts from (what a tutorial ships). */
+function lessonLink(): { link: string; client: string } {
+  const sandbox = createSim();
+  document.body.append(sandbox.el);
+  sandbox.setShape(shape());
+  const { server, client } = place(sandbox);
+  fire(client, "click");
+  pick(sandbox.el.querySelector(".connect-sel") as HTMLSelectElement, server.dataset.id!);
+  const link = sandbox.serialize();
+  const name = client.querySelector(".node-name")!.textContent!;
+  sandbox.destroy();
+  sandbox.el.remove();
+  return { link, client: name };
+}
+
+test("lesson — the scene is fixed: no palette, ports, drops or box controls", () => {
+  const { link } = lessonLink();
+  const sim = createSim({ layout: "lesson" });
+  document.body.append(sim.el);
+  sim.setShape(shape(), link);
+
+  assert.ok(sim.el.classList.contains("lesson"));
+  assert.equal(sim.el.querySelector(".sim-palette"), null, "no palette");
+  assert.equal(sim.el.querySelectorAll(".sim-node").length, 2, "the session's instances are shown");
+  assert.equal(sim.el.querySelector(".node-port"), null, "no ports to drag a connection from");
+  assert.ok(sim.el.querySelector(".sim-wire .wire-live"), "the given connection is drawn");
+  assert.equal(sim.el.querySelector(".sim-inspector-grip"), null, "no resize grips");
+  assert.equal(sim.el.querySelector(".sim-frames-grip"), null);
+
+  // a drop is ignored
+  drop(sim.el.querySelector(".sim-canvas")!, { schemaNs: "chat", protocol: "Chat", role: "server" });
+  assert.equal(sim.el.querySelectorAll(".sim-node").length, 2, "nothing can be added");
+
+  // clicking the box's caption doesn't open the box inspector
+  fire(sim.el.querySelector(".group-cap")!, "click");
+  assert.equal(sim.el.querySelector(".box-name"), null, "the box can't be renamed or removed");
+
+  // no clock bar by default
+  assert.equal(sim.el.querySelector(".clock-bar")!.children.length, 0);
+  sim.destroy();
+});
+
+test("lesson — a server offers only the chosen behaviours, a client only its calls", () => {
+  const { link } = lessonLink();
+  const sim = createSim({ layout: "lesson", behaviours: ["reply", "echo", "drop"] });
+  document.body.append(sim.el);
+  sim.setShape(shape(), link);
+  const nodes = [...sim.el.querySelectorAll(".sim-node")] as HTMLElement[];
+  const server = nodes.find((n) => n.classList.contains("role-server"))!;
+  const client = nodes.find((n) => n.classList.contains("role-client"))!;
+
+  fire(server, "click");
+  const tabs = () => [...sim.el.querySelectorAll(".insp-tab")].map((t) => t.textContent);
+  assert.deepEqual(tabs(), ["behaviours"]);
+  const kinds = [
+    ...(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement).options,
+  ].map((o) => o.value);
+  assert.deepEqual(kinds.sort(), ["drop", "echo", "reply"]);
+
+  fire(client, "click");
+  assert.deepEqual(tabs(), ["call"]);
+  assert.equal(sim.el.querySelector(".insp-crumb"), null, "no link up to the box");
+  const blk = callBlock(sim.el, "send");
+  assert.deepEqual(
+    [...blk.querySelectorAll(".sim-btn")].map((b) => b.textContent),
+    ["send"],
+    "no compare button",
+  );
+  sim.destroy();
+});
+
+test("lesson — `select` opens on the client, and a call shows its reply and frames", async () => {
+  const { link, client } = lessonLink();
+  const sim = createSim({ layout: "lesson", select: client });
+  document.body.append(sim.el);
+  sim.setShape(shape(), link);
+
+  const selected = sim.el.querySelector(".sim-node.selected") as HTMLElement;
+  assert.ok(selected?.classList.contains("role-client"), "the client is selected");
+
+  const blk = callBlock(sim.el, "send");
+  (blk.querySelector(".call-args .arg-input") as HTMLInputElement).value = "hello";
+  const out = fireSend(sim.el, "send");
+  await tick();
+  assert.ok(out.classList.contains("ok"), out.textContent!);
+  const frames = sim.el.querySelectorAll(".sim-frames-list .frame-row");
+  assert.ok(frames.length >= 2, `expected the call's frames, got ${frames.length}`);
+  sim.destroy();
+});
+
+test("sandbox — `clock: false` hides the clock bar there too", () => {
+  const sim = createSim({ clock: false });
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  assert.ok(sim.el.querySelector(".sim-palette"), "still a sandbox");
+  assert.equal(sim.el.querySelector(".clock-bar")!.children.length, 0);
+  sim.destroy();
+});
