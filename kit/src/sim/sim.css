@@ -21,6 +21,19 @@
 .cl-sim *::after {
   box-sizing: inherit;
 }
+/* The host page's element styles (a font or padding on every p, a centred
+   main) stop at the view: its own classes style what's inside. */
+.cl-sim {
+  text-align: left;
+}
+.cl-sim p,
+.cl-sim a,
+.cl-sim label,
+.cl-sim span {
+  font-family: inherit;
+  color: inherit;
+  padding: 0;
+}
 
 /* general utilities the view uses */
 .cl-sim .is-hidden {
@@ -920,4 +933,37 @@
 }
 .cl-sim .insp-crumb:hover {
   color: var(--accent);
+}
+
+/* ── lesson layout ───────────────────────────────────────────────────────
+   One column (canvas, inspector, frames) that grows with its content, to sit
+   in a page rather than fill a window. */
+.cl-sim.lesson {
+  height: auto;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto auto;
+  grid-template-areas:
+    "canvas"
+    "inspector"
+    "frames";
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cl-sim.lesson .sim-canvas {
+  overflow: hidden;
+}
+.cl-sim.lesson .sim-inspector-wrap {
+  border-top: 1px solid var(--border);
+}
+.cl-sim.lesson .sim-frames {
+  border-top: 1px solid var(--border);
+  max-height: 16rem;
+}
+.cl-sim.lesson .sim-node-group,
+.cl-sim.lesson .sim-wire .wire-hit {
+  cursor: default;
+}
+.cl-sim .clock-bar:empty {
+  display: none;
 }

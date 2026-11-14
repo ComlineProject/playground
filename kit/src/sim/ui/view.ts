@@ -123,6 +123,21 @@ export interface SimOpts {
    *  `comline-web-kit/sim/scripted`, or a test's own. Without it, the
    *  `script` behaviour isn't offered. */
   loadScripted?: () => Promise<{ Sim: typeof Sim }>;
+  /** `"sandbox"` (the default) is the playground's: a palette, a free canvas
+   *  and every control. `"lesson"` is a fixed scene for a guided page, given
+   *  by the session link passed to `setShape`. It has no palette, nothing on
+   *  the canvas can be added, moved, connected, renamed or removed, the
+   *  inspector shows only a server's behaviours and a client's calls, and the
+   *  canvas, inspector and frames stack in one column. */
+  layout?: "sandbox" | "lesson";
+  /** The behaviour kinds a server offers, out of the engine's catalog. The
+   *  one already set is always offered. Default: all of them. */
+  behaviours?: string[];
+  /** The clock bar above the frames (clock mode, seed, link, record and
+   *  replay). Default: shown in a sandbox, hidden in a lesson. */
+  clock?: boolean;
+  /** The instance to select once `setShape` loads a session, by id or name. */
+  select?: string;
 }
 
 export function createSim(opts: SimOpts = {}): SimView {
@@ -173,7 +188,13 @@ export function createSim(opts: SimOpts = {}): SimView {
   const sessionHasScript = () =>
     !!model?.instances.some((i) => Object.values(i.behaviors).some((b) => b.kind === "script"));
 
-  const el = div("cl-sim sim");
+  // A lesson is a fixed scene: everything that edits the topology is left out,
+  // and the parts stack instead of sitting in the sandbox's grid.
+  const lesson = opts.layout === "lesson";
+  const showClock = opts.clock ?? !lesson;
+  const offered = opts.behaviours ? new Set(opts.behaviours) : null;
+
+  const el = div(lesson ? "cl-sim sim lesson" : "cl-sim sim");
   const paletteEl = div("sim-col sim-palette");
   const canvasEl = div("sim-col sim-canvas");
   const inspectorEl = div("sim-col sim-inspector");
@@ -181,20 +202,25 @@ export function createSim(opts: SimOpts = {}): SimView {
   const inspectorWrap = div("sim-inspector-wrap");
   const inspectorGrip = div("sim-inspector-grip");
   inspectorGrip.title = "drag to resize";
-  inspectorWrap.append(inspectorGrip, inspectorEl);
+  inspectorWrap.append(...(lesson ? [] : [inspectorGrip]), inspectorEl);
   const wireSvg = document.createElementNS(SVGNS, "svg");
   wireSvg.setAttribute("class", "sim-wire");
   canvasEl.append(wireSvg);
-  const flog = frameLog();
+  const flog = frameLog({ resizable: !lesson });
+  /** The clock bar, unless this view hides it. */
+  const paintClock = () => {
+    if (showClock) flog.setClockBar(clockBar());
+  };
 
   el.append(
-    labelled("palette", paletteEl),
+    ...(lesson ? [] : [labelled("palette", paletteEl)]),
     labelled("canvas", canvasEl),
     inspectorWrap,
     flog.el,
   );
 
-  const onResize = () => drawWires();
+  // a lesson re-fits its scene to the new width; a sandbox only redraws wires
+  const onResize = () => (lesson ? renderCanvas() : drawWires());
   window.addEventListener("resize", onResize);
 
   // ── inspector resize grip ────────────────────────────────────────────
@@ -220,7 +246,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     }
     drawWires();
   };
-  const savedInspectorWidth = storedInspectorWidth();
+  const savedInspectorWidth = lesson ? null : storedInspectorWidth();
   if (savedInspectorWidth !== null) applyInspectorWidth(savedInspectorWidth);
   inspectorGrip.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -259,7 +285,7 @@ export function createSim(opts: SimOpts = {}): SimView {
   // ── palette ──────────────────────────────────────────────────────────
   function renderPalette() {
     paletteEl.replaceChildren();
-    if (!shape) return;
+    if (!shape || lesson) return;
     for (const schema of shape.schemas) {
       for (const protocol of schema.protocols) {
         const group = div("palette-group");
@@ -323,7 +349,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     e.preventDefault();
     clearDropTarget();
     const raw = e.dataTransfer?.getData("application/json");
-    if (!raw || !sim || !model) return;
+    if (!raw || !sim || !model || lesson) return;
     const spec = JSON.parse(raw) as { schemaNs: string; protocol: string; role: Role };
     const ontoNode = (e.target as HTMLElement | null)?.closest<HTMLElement>(".sim-node-group");
     const p = canvasPoint(e);
@@ -385,21 +411,66 @@ export function createSim(opts: SimOpts = {}): SimView {
   function renderCanvas() {
     for (const g of [...canvasEl.querySelectorAll(".sim-node-group")]) g.remove();
     if (!model) return;
+    lessonFit = lesson ? fitScene(model.nodes) : null;
+    // not laid out yet (the page hasn't attached the view): fit once it is
+    if (lesson && !lessonFit && model.nodes.length && typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        if (canvasEl.clientWidth) renderCanvas();
+      });
+    }
     for (const nd of model.nodes) canvasEl.append(groupCard(nd));
-    dropHint.hidden = model.nodes.length > 0;
+    dropHint.hidden = lesson || model.nodes.length > 0;
+    // A lesson's canvas isn't a grid cell that fills the view, so it grows to
+    // hold the scene's boxes (placed absolutely).
+    if (lesson) {
+      const bottom = Math.max(0, ...model.nodes.map((n) => at(n).y + 64 * n.instanceIds.length));
+      canvasEl.style.minHeight = `${bottom + 24}px`;
+    }
     drawWires();
+  }
+
+  // A lesson's scene comes from a session link, placed for some other width.
+  // `fitScene` maps it onto this canvas: the boxes keep their order and rows,
+  // horizontal gaps shrink when the scene is wider than the canvas, and the
+  // whole is centred. Without a laid-out canvas (width 0), positions stay.
+  const BOX_W = 156;
+  const FIT_MARGIN = 16;
+  let lessonFit: ((nd: ModelNode) => { x: number; y: number }) | null = null;
+  const at = (nd: ModelNode) => (lessonFit ? lessonFit(nd) : { x: nd.x, y: nd.y });
+  function fitScene(nodes: ModelNode[]): ((nd: ModelNode) => { x: number; y: number }) | null {
+    const width = canvasEl.clientWidth;
+    if (!width || nodes.length === 0) return null;
+    const minX = Math.min(...nodes.map((n) => n.x));
+    const minY = Math.min(...nodes.map((n) => n.y));
+    const span = Math.max(...nodes.map((n) => n.x)) - minX;
+    const room = Math.max(0, width - 2 * FIT_MARGIN - BOX_W);
+    const scale = span > room ? room / span : 1;
+    const left = Math.max(FIT_MARGIN, (width - (span * scale + BOX_W)) / 2);
+    return (nd) => ({
+      x: Math.round(left + (nd.x - minX) * scale),
+      y: Math.round(FIT_MARGIN + nd.y - minY),
+    });
   }
 
   function groupCard(nd: ModelNode): HTMLElement {
     const g = div("sim-node-group");
     g.dataset.nodeId = nd.id;
-    g.style.left = `${nd.x}px`;
-    g.style.top = `${nd.y}px`;
+    const pos = at(nd);
+    g.style.left = `${pos.x}px`;
+    g.style.top = `${pos.y}px`;
     if (nd.id === selectedNodeId) g.classList.add("selected");
 
     const cap = div("group-cap mono");
     const count = nd.instanceIds.length > 1 ? ` · ${nd.instanceIds.length}` : "";
     cap.textContent = nd.label + count;
+    g.append(cap);
+    for (const id of nd.instanceIds) {
+      const i = inst(id);
+      if (i) g.append(instRow(i));
+    }
+    // In a lesson the box is a fixed label: only its instances are clickable.
+    if (lesson) return g;
+
     cap.title = "click to select the box · double-click to rename";
     cap.addEventListener("click", () => selectNode(nd.id));
     cap.addEventListener("dblclick", (e) => {
@@ -421,12 +492,6 @@ export function createSim(opts: SimOpts = {}): SimView {
       input.focus?.();
       input.select?.();
     });
-    g.append(cap);
-
-    for (const id of nd.instanceIds) {
-      const i = inst(id);
-      if (i) g.append(instRow(i));
-    }
     g.addEventListener("pointerdown", (e) => startGroupDrag(e, nd, g));
     return g;
   }
@@ -443,15 +508,19 @@ export function createSim(opts: SimOpts = {}): SimView {
     const sub = document.createElement("div");
     sub.className = "node-sub mono";
     sub.textContent = `${i.protocol} · ${i.role}`;
-    const port = div("node-port");
-    port.title = "drag to a partner to connect";
-    n.append(name, sub, port);
-
+    n.append(name, sub);
     n.addEventListener("click", () => select(i.id));
-    port.addEventListener("pointerdown", (e) => {
-      e.stopPropagation();
-      startConnectDrag(e, i);
-    });
+    // A lesson's connections are given, so its rows have no port to drag from
+    // (a wire then attaches to the row itself, see `portAnchor`).
+    if (!lesson) {
+      const port = div("node-port");
+      port.title = "drag to a partner to connect";
+      n.append(port);
+      port.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        startConnectDrag(e, i);
+      });
+    }
     n.addEventListener("pointerenter", () => (hoverId = i.id));
     n.addEventListener("pointerleave", () => {
       if (hoverId === i.id) hoverId = null;
@@ -569,7 +638,7 @@ export function createSim(opts: SimOpts = {}): SimView {
         ln.setAttribute("y1", String(a.y));
         ln.setAttribute("x2", String(b.x));
         ln.setAttribute("y2", String(b.y));
-        ln.addEventListener("click", () => selectConn(conn.id));
+        if (!lesson) ln.addEventListener("click", () => selectConn(conn.id));
       }
       wireSvg.append(hit, vis);
     }
@@ -637,7 +706,7 @@ export function createSim(opts: SimOpts = {}): SimView {
         if (!sim) return;
         if (on) sim.record_start();
         else lastRecording = JSON.parse(sim.record_stop()) as Recording;
-        flog.setClockBar(clockBar());
+        paintClock();
       },
       onReplay: () => {
         if (lastRecording) void replayInView(lastRecording);
@@ -687,21 +756,21 @@ export function createSim(opts: SimOpts = {}): SimView {
       afterAdvance();
       if (sim.pending() === 0) pause();
     }, 32);
-    flog.setClockBar(clockBar());
+    paintClock();
   }
   function pause() {
     if (playHandle !== null) {
       clearInterval(playHandle);
       playHandle = null;
     }
-    flog.setClockBar(clockBar());
+    paintClock();
   }
 
   /** Poll for settled calls + new frames after the clock moved. */
   function afterAdvance() {
     settlePending();
     flog.poll();
-    flog.setClockBar(clockBar());
+    paintClock();
   }
 
   function errorName(throws: ThrowShape[], ordinal: number): string | undefined {
@@ -758,7 +827,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     refresh();
     renderPalette();
     flog.setSources(logSources(), frameApi);
-    flog.setClockBar(clockBar());
+    paintClock();
     renderCanvas();
     renderInspector();
   }
@@ -811,7 +880,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     }
 
     const box = node(sel.nodeId);
-    if (box) {
+    if (box && !lesson) {
       const crumb = document.createElement("button");
       crumb.className = "insp-crumb";
       crumb.textContent = `▸ in box ${box.label}`;
@@ -945,10 +1014,16 @@ export function createSim(opts: SimOpts = {}): SimView {
       sel.role === "client" && connsFor(sel.id).some((c) => live(c.id)) ? mkPanel("call") : null;
     if (callPanel) callPanel.append(renderCallForm(sel));
 
-    const panels: HTMLElement[] = [instPanel, connPanel, behPanel, callPanel].filter(
-      (p): p is HTMLDivElement => p !== null,
-    );
-    if (!panels.some((p) => p.dataset.tab === inspectorTab)) inspectorTab = "instance";
+    // A lesson keeps what its reader acts on: a server's behaviours and a
+    // client's calls.
+    const panels: HTMLElement[] = (
+      lesson ? [behPanel, callPanel] : [instPanel, connPanel, behPanel, callPanel]
+    ).filter((p): p is HTMLDivElement => p !== null);
+    if (panels.length === 0) {
+      inspectorEl.append(muted(`${sel.name} has nothing to do here yet`));
+      return;
+    }
+    if (!panels.some((p) => p.dataset.tab === inspectorTab)) inspectorTab = panels[0].dataset.tab!;
 
     const tabs = div("insp-tabs");
     for (const p of panels) {
@@ -1231,7 +1306,8 @@ export function createSim(opts: SimOpts = {}): SimView {
       }[]
     )
       // `script` lazy-loads its wasm on first pick, so it needs a loader
-      .filter((e) => e.applies && (e.kind !== "script" || loadScripted !== null));
+      .filter((e) => e.applies && (e.kind !== "script" || loadScripted !== null))
+      .filter((e) => !offered || offered.has(e.kind) || e.kind === setting().kind);
 
     const wrap = div("behavior-row");
     const head = div("behavior-head");
@@ -1468,6 +1544,8 @@ export function createSim(opts: SimOpts = {}): SimView {
         "title",
         "run this call over every framing/codec combo and compare the replies",
       );
+      // comparing framings and codecs is a sandbox tool, not a lesson's
+      if (lesson) btns.lastElementChild!.remove();
       b.append(btns, out, compareOut);
       return b;
     };
@@ -1498,7 +1576,7 @@ export function createSim(opts: SimOpts = {}): SimView {
       selectedNodeId = null;
     }
     flog.setSources(logSources(), frameApi);
-    flog.setClockBar(clockBar());
+    paintClock();
     renderCanvas();
     renderInspector();
   }
@@ -1508,7 +1586,7 @@ export function createSim(opts: SimOpts = {}): SimView {
     refresh();
     renderCanvas();
     renderInspector();
-    flog.setClockBar(clockBar());
+    paintClock();
   }
 
   return {
@@ -1523,9 +1601,13 @@ export function createSim(opts: SimOpts = {}): SimView {
       } catch {
         sim = new SimClass(shapeJson);
       }
-      selectedId = null;
       selectedConnId = null;
       selectedNodeId = null;
+      refresh();
+      const wanted = opts.select;
+      selectedId = wanted
+        ? (model?.instances.find((i) => i.id === wanted || i.name === wanted)?.id ?? null)
+        : null;
       renderPalette();
       redraw();
       // A restored link may carry `script` behaviours the lean wasm only stubs —
@@ -1539,11 +1621,11 @@ export function createSim(opts: SimOpts = {}): SimView {
       if (!sim) return null;
       if (on) {
         sim.record_start();
-        flog.setClockBar(clockBar());
+        paintClock();
         return null;
       }
       lastRecording = JSON.parse(sim.record_stop()) as Recording;
-      flog.setClockBar(clockBar());
+      paintClock();
       return lastRecording;
     },
     async replay(rec) {
