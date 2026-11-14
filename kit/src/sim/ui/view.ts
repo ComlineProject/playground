@@ -119,8 +119,9 @@ function faultsActive(f: Faults): boolean {
 }
 
 export interface SimOpts {
-  /** Test seam: hand back the scripted sim module instead of `import()`ing it
-   *  (which, in a build, is a code-split fetch of the heavier Rhai wasm). */
+  /** Loads the Rhai-scripted engine: `loadScripted` from
+   *  `comline-web-kit/sim/scripted`, or a test's own. Without it, the
+   *  `script` behaviour isn't offered. */
   loadScripted?: () => Promise<{ Sim: typeof Sim }>;
 }
 
@@ -144,25 +145,16 @@ export function createSim(opts: SimOpts = {}): SimView {
   // loaded only once a `script` behaviour is actually picked. `SimClass` starts
   // lean; `ensureScripted` swaps in the scripted class and re-seats the live
   // session on it (via the `#s=` link), after which every rebuild uses it too.
+  // Without `opts.loadScripted`, the page has no scripted engine to load.
   let SimClass: typeof Sim = Sim;
   let scripted = false;
-  const loadScripted =
-    opts.loadScripted ??
-    (async () => {
-      // Same surface as the lean module, just Rhai-enabled — hence the cast
-      // (the `pkg-script/` ambient is deliberately opaque). Vite code-splits
-      // this dynamic import, so the ~2 MB scripted wasm only downloads here.
-      const m = (await import(
-        "comline-simulator/pkg-script/comline_simulator.js"
-      )) as typeof import("comline-simulator");
-      const { default: wasmUrl } = await import(
-        "comline-simulator/pkg-script/comline_simulator_bg.wasm?url"
-      );
-      await m.default({ module_or_path: wasmUrl });
-      return { Sim: m.Sim };
-    });
+  const loadScripted = opts.loadScripted ?? null;
   async function ensureScripted(): Promise<boolean> {
     if (scripted) return true;
+    if (!loadScripted) {
+      flashInspectorError("scripting isn't available on this page");
+      return false;
+    }
     try {
       SimClass = (await loadScripted()).Sim;
       if (sim) {
@@ -181,7 +173,7 @@ export function createSim(opts: SimOpts = {}): SimView {
   const sessionHasScript = () =>
     !!model?.instances.some((i) => Object.values(i.behaviors).some((b) => b.kind === "script"));
 
-  const el = div("sim");
+  const el = div("cl-sim sim");
   const paletteEl = div("sim-col sim-palette");
   const canvasEl = div("sim-col sim-canvas");
   const inspectorEl = div("sim-col sim-inspector");
@@ -1237,7 +1229,9 @@ export function createSim(opts: SimOpts = {}): SimView {
         label: string;
         applies: boolean;
       }[]
-    ).filter((e) => e.applies); // `script` lazy-loads its wasm on first pick
+    )
+      // `script` lazy-loads its wasm on first pick, so it needs a loader
+      .filter((e) => e.applies && (e.kind !== "script" || loadScripted !== null));
 
     const wrap = div("behavior-row");
     const head = div("behavior-head");

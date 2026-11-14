@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-const initWasm = (await import("../wasm/comline_playground_wasm.js")).default;
-const { describe_project } = await import("../wasm/comline_playground_wasm.js");
+const initWasm = (await import("../../pkg-editor/comline_playground_wasm.js")).default;
+const { describe_project } = await import("../../pkg-editor/comline_playground_wasm.js");
 await initWasm(
-  readFileSync(fileURLToPath(new URL("../wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
+  readFileSync(fileURLToPath(new URL("../../pkg-editor/comline_playground_wasm_bg.wasm", import.meta.url))),
 );
 import { typeLabel, zeroValue, type ProjectShape, type TypeDef } from "./shape.ts";
 

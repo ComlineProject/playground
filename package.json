@@ -1,0 +1,15 @@
+{
+  "name": "comline-playground-workspace",
+  "private": true,
+  "workspaces": [
+    "app",
+    "kit"
+  ],
+  "scripts": {
+    "wasm": "yarn workspace comline-web-kit wasm",
+    "dev": "yarn wasm && yarn workspace comline-playground dev",
+    "build": "yarn workspace comline-playground build",
+    "test": "yarn workspace comline-web-kit test && yarn workspace comline-playground test"
+  },
+  "packageManager": "yarn@4.18.0"
+}

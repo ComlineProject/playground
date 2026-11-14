@@ -9,10 +9,10 @@ import { test } from "node:test";
 
 import examples from "comline-examples";
 
-const initWasm = (await import("./wasm/comline_playground_wasm.js")).default;
-const { compile_project } = await import("./wasm/comline_playground_wasm.js");
+const initWasm = (await import("comline-web-kit/editor-wasm")).default;
+const { compile_project } = await import("comline-web-kit/editor-wasm");
 await initWasm(
-  readFileSync(fileURLToPath(new URL("./wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
+  readFileSync(fileURLToPath(import.meta.resolve("comline-web-kit/editor-wasm/bg.wasm"))),
 );
 
 interface Example {

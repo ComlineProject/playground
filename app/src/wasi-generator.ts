@@ -41,7 +41,7 @@ import {
   decode_response,
   encode_describe,
   encode_request,
-} from "./wasm/comline_playground_wasm.js";
+} from "comline-web-kit/editor-wasm";
 import { STDERR_CAP, type GuestCall, type GuestResult } from "./wasi-generator-guest.ts";
 
 export { STDERR_CAP, STDOUT_CAP } from "./wasi-generator-guest.ts";

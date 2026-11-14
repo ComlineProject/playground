@@ -16,16 +16,16 @@ const { document, window } = parseHTML("<!doctype html><html><body></body></html
 // is exactly what the view's guarded `navigator.clipboard?.writeText` expects.
 Object.assign(globalThis, { document, window });
 
-const initWasm = (await import("../wasm/comline_playground_wasm.js")).default;
-const { describe_project } = await import("../wasm/comline_playground_wasm.js");
+const initWasm = (await import("../../pkg-editor/comline_playground_wasm.js")).default;
+const { describe_project } = await import("../../pkg-editor/comline_playground_wasm.js");
 await initWasm(
-  readFileSync(fileURLToPath(new URL("../wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
+  readFileSync(fileURLToPath(new URL("../../pkg-editor/comline_playground_wasm_bg.wasm", import.meta.url))),
 );
 const initSim = (await import("comline-simulator")).default;
 await initSim(
   readFileSync(
     fileURLToPath(
-      new URL("../../node_modules/comline-simulator/pkg/comline_simulator_bg.wasm", import.meta.url),
+      import.meta.resolve("comline-simulator/pkg/comline_simulator_bg.wasm"),
     ),
   ),
 );
@@ -1167,8 +1167,8 @@ test("2e — record a call through the UI, then replay it", async () => {
 // ── 2f — scripted behaviour (Rhai), lazy-loaded ──────────────────────
 const scriptedWasm = fileURLToPath(
   new URL(
-    "../../node_modules/comline-simulator/pkg-script/comline_simulator_bg.wasm",
-    import.meta.url,
+    "pkg-script/comline_simulator_bg.wasm",
+    import.meta.resolve("comline-simulator/package.json"),
   ),
 );
 const loadScripted = async () => {
@@ -1176,6 +1176,21 @@ const loadScripted = async () => {
   await m.default(readFileSync(scriptedWasm));
   return { Sim: m.Sim };
 };
+
+test("2f — without a scripted engine to load, `script` isn't offered", () => {
+  const sim = createSim();
+  document.body.append(sim.el);
+  sim.setShape(shape());
+  const { server } = place(sim);
+
+  fire(server, "click");
+  const kinds = [
+    ...(sim.el.querySelector(".behavior-row .behavior-kind") as HTMLSelectElement).options,
+  ].map((o) => o.value);
+  assert.ok(kinds.includes("reply") && kinds.includes("echo"), "the other behaviours are offered");
+  assert.ok(!kinds.includes("script"), "`script` needs a loader");
+  sim.destroy();
+});
 
 test(
   "2f — picking `script` pulls the scripted wasm and runs a Rhai reply",

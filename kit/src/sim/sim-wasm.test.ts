@@ -7,15 +7,15 @@ import { fileURLToPath } from "node:url";
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import initEditor, { describe_project } from "../wasm/comline_playground_wasm.js";
+import initEditor, { describe_project } from "../../pkg-editor/comline_playground_wasm.js";
 import initSim, { Sim } from "comline-simulator";
 
 const simWasm = fileURLToPath(
-  new URL("../../node_modules/comline-simulator/pkg/comline_simulator_bg.wasm", import.meta.url),
+  import.meta.resolve("comline-simulator/pkg/comline_simulator_bg.wasm"),
 );
 
 await initEditor(
-  readFileSync(fileURLToPath(new URL("../wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
+  readFileSync(fileURLToPath(new URL("../../pkg-editor/comline_playground_wasm_bg.wasm", import.meta.url))),
 );
 await initSim(readFileSync(simWasm));
 

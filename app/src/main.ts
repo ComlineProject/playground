@@ -4,25 +4,19 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import {
+  createCompiler,
   makeState,
   mountEditor,
   readOnlyExtensions,
-  type EditorBridge,
+  type CompileProjectResult,
   type EditorContext,
-} from "./editor.ts";
-import type {
-  CompileProjectResult,
-  CompletionItem,
-  FileInput,
-  GeneratedFile,
-  GenerateResult,
-  Hover,
-  LspPosition,
-  SemanticTokens,
-} from "./worker.ts";
-import { createSim, type ProjectShape, type SimView } from "./sim/index.ts";
-import initSimWasm from "comline-simulator";
-import simWasmUrl from "comline-simulator/pkg/comline_simulator_bg.wasm?url";
+  type FileInput,
+  type GeneratedFile,
+  type LspPosition,
+} from "comline-web-kit/editor";
+import { createSim, loadSim, type SimView } from "comline-web-kit/sim";
+import { loadScripted } from "comline-web-kit/sim/scripted";
+import "comline-web-kit/sim.css";
 import examplesData from "comline-examples";
 
 // ── examples ────────────────────────────────────────────────────────────
@@ -106,50 +100,17 @@ const langCompartment = new Compartment();
 const langCache = new Map<string, Extension | null>();
 const langLoading = new Set<string>();
 
-// ── worker plumbing ─────────────────────────────────────────────────────
-const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-let seq = 0;
-const pending = new Map<number, (v: unknown) => void>();
-
-worker.onmessage = (e: MessageEvent<{ id: number; result?: unknown; error?: string }>) => {
-  const resolve = pending.get(e.data.id);
-  if (!resolve) return;
-  pending.delete(e.data.id);
-  resolve(e.data.error ? { __error: e.data.error } : e.data.result);
-};
-
-function call<T>(msg: Record<string, unknown>): Promise<T> {
-  const id = ++seq;
-  return new Promise((resolve) => {
-    pending.set(id, resolve as (v: unknown) => void);
-    worker.postMessage({ id, ...msg });
-  });
-}
-
-async function unwrap<T>(msg: Record<string, unknown>, fallback: T): Promise<T> {
-  const r = await call<T | { __error: string }>(msg);
-  if (r && typeof r === "object" && "__error" in r) {
+// ── the compile worker ──────────────────────────────────────────────────
+const compiler = createCompiler({
+  onError: () => {
     statusEl.textContent = "wasm error";
     statusEl.className = "status err";
-    return fallback;
-  }
-  return r as T;
-}
-
-const bridge: EditorBridge = {
-  compileProject: (f) =>
-    unwrap<CompileProjectResult>({ cmd: "compileProject", files: f }, { files: [] }),
-  semanticTokens: (source) =>
-    unwrap<SemanticTokens>({ cmd: "semanticTokens", source }, { data: [] }),
-  hover: (files, activePath, line, character) =>
-    unwrap<Hover | null>({ cmd: "hover", files, activePath, line, character }, null),
-  completions: (source, line, character) =>
-    unwrap<CompletionItem[]>({ cmd: "completions", source, line, character }, []),
-};
+  },
+});
 
 // ── editor ──────────────────────────────────────────────────────────────
 const ctx: EditorContext = {
-  bridge,
+  bridge: compiler,
   project,
   activeName: () => activeFile()?.name ?? "",
   onDocChanged: (d) => {
@@ -505,10 +466,7 @@ async function renderOutput() {
     destroyGenCode();
     viewEl.innerHTML = `<p class="muted">generating…</p>`;
   }
-  const res = await unwrap<GenerateResult>(
-    { cmd: "generateProject", files: project(), target: targetSel.value, mode },
-    { files: [], error: "wasm error" },
-  );
+  const res = await compiler.generateProject(project(), targetSel.value, mode);
   if (currentView !== "output") return;
   if (res.error) {
     genFiles = null;
@@ -681,7 +639,7 @@ function scheduleRefresh() {
 }
 
 async function refresh() {
-  lastProject = await bridge.compileProject(project());
+  lastProject = await compiler.compileProject(project());
   let problems = 0;
   let parseFail = false;
   for (const f of lastProject.files) {
@@ -732,13 +690,10 @@ let sim: SimView | null = null;
 let simLoaded = false;
 
 async function enterSimulate() {
-  await initSimWasm({ module_or_path: simWasmUrl }); // idempotent
-  const shape = await unwrap<ProjectShape>(
-    { cmd: "describeProject", files: project() },
-    { schemas: [] },
-  );
+  await loadSim(); // idempotent
+  const shape = await compiler.describeProject(project());
   if (!sim) {
-    sim = createSim();
+    sim = createSim({ loadScripted });
     simEl.append(sim.el);
   }
   // A `#s=…` fragment restores a shared topology, but only on the first entry.

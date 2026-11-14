@@ -769,9 +769,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"comline-playground@workspace:.":
+"comline-playground-workspace@workspace:.":
   version: 0.0.0-use.local
-  resolution: "comline-playground@workspace:."
+  resolution: "comline-playground-workspace@workspace:."
+  languageName: unknown
+  linkType: soft
+
+"comline-playground@workspace:app":
+  version: 0.0.0-use.local
+  resolution: "comline-playground@workspace:app"
   dependencies:
     "@bjorn3/browser_wasi_shim": "npm:0.4.2"
     "@codemirror/autocomplete": "npm:^6.18.0"
@@ -787,7 +793,7 @@ __metadata:
     "@lezer/highlight": "npm:^1.2.3"
     "@types/node": "npm:^20.19.43"
     comline-examples: "git+https://github.com/ComlineProject/examples.git#f63894988ea2cc5db98ff97cc0fbdfceb5af6bb7"
-    comline-simulator: "git+https://github.com/ComlineProject/simulator.git#564851a8fa00709cd94db8ce8ab1c4325a691fc4"
+    comline-web-kit: "workspace:*"
     linkedom: "npm:^0.18.13"
     tsx: "npm:^4.23.13"
     typescript: "npm:^5.6.0"
@@ -798,9 +804,29 @@ __metadata:
 "comline-simulator@git+https://github.com/ComlineProject/simulator.git#564851a8fa00709cd94db8ce8ab1c4325a691fc4":
   version: 0.0.0
   resolution: "comline-simulator@https://github.com/ComlineProject/simulator.git#commit=564851a8fa00709cd94db8ce8ab1c4325a691fc4"
-  checksum: 10c0/0238c841ab44ef23e1224473c61631b0424ab9d470474921d43fdb7a5d9f4792c0902374964773298f28fcd91913c6447edb57a9643a5f2cee1052ffc0dbb396
+  checksum: 10c0/1fe55d8965ac0390ea18b5734e8ccc62e9d474caad40529305a40a90d247b4da93ac99fe124b93aa46fe214f53755260ac2070c80da839a8aaa4c64a9206a8b2
   languageName: node
   linkType: hard
+
+"comline-web-kit@workspace:*, comline-web-kit@workspace:kit":
+  version: 0.0.0-use.local
+  resolution: "comline-web-kit@workspace:kit"
+  dependencies:
+    "@codemirror/autocomplete": "npm:^6.18.0"
+    "@codemirror/commands": "npm:^6.7.0"
+    "@codemirror/language": "npm:^6.10.0"
+    "@codemirror/lint": "npm:^6.8.0"
+    "@codemirror/state": "npm:^6.4.0"
+    "@codemirror/view": "npm:^6.34.0"
+    "@lezer/highlight": "npm:^1.2.3"
+    "@types/node": "npm:^20.19.43"
+    comline-simulator: "git+https://github.com/ComlineProject/simulator.git#564851a8fa00709cd94db8ce8ab1c4325a691fc4"
+    linkedom: "npm:^0.18.13"
+    tsx: "npm:^4.23.13"
+    typescript: "npm:^5.6.0"
+    vite: "npm:^5.4.0"
+  languageName: unknown
+  linkType: soft
 
 "crelt@npm:^1.0.5, crelt@npm:^1.0.6":
   version: 1.0.7

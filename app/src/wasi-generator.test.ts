@@ -24,7 +24,7 @@ import { Worker } from "node:worker_threads";
 
 import examples from "comline-examples";
 
-import initEditor, { decode_response, encode_describe, generate_project } from "./wasm/comline_playground_wasm.js";
+import initEditor, { decode_response, encode_describe, generate_project } from "comline-web-kit/editor-wasm";
 import {
   generateWithWasiGenerator,
   limitMemory,
@@ -37,7 +37,7 @@ import {
 import type { GuestResult } from "./wasi-generator-guest.ts";
 
 await initEditor(
-  readFileSync(fileURLToPath(new URL("./wasm/comline_playground_wasm_bg.wasm", import.meta.url))),
+  readFileSync(fileURLToPath(import.meta.resolve("comline-web-kit/editor-wasm/bg.wasm"))),
 );
 
 const tsxApi = import.meta.resolve("tsx/esm/api");
